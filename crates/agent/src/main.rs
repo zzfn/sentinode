@@ -1,9 +1,9 @@
 use anyhow::Result;
 use clap::Parser;
-use rustls::crypto::ring;
 use common::monitor_client::MonitorClient;
 use common::{DiskStat, Metrics, NetStat, NodeInfo, ReportRequest};
 use local_ip_address::local_ip;
+use rustls::crypto::ring;
 use std::time::Duration;
 use sysinfo::{Disks, Networks, System};
 use tonic::metadata::MetadataValue;
