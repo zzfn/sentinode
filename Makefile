@@ -3,6 +3,10 @@
 # 从 .env.local 加载环境变量
 ENV := $(shell [ -f .env.local ] && echo "set -a && . ./.env.local && set +a &&" || echo "")
 
+## 初始化开发环境（首次克隆后运行一次）
+setup:
+	git config core.hooksPath .githooks
+
 ## 确保本地数据库存在（首次使用前运行一次）
 db-init:
 	@$(ENV) psql "$$DATABASE_URL" -c "SELECT 1" > /dev/null 2>&1 && \
