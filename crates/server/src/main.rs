@@ -148,7 +148,10 @@ impl Monitor for MonitorService {
         .await
         .map_err(|e| Status::internal(e.to_string()))?;
 
-        info!("recorded metrics for {} (node_id={})", node.hostname, node_id);
+        info!(
+            "recorded metrics for {} (node_id={})",
+            node.hostname, node_id
+        );
         Ok(Response::new(ReportResponse { ok: true }))
     }
 }
