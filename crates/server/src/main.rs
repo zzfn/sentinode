@@ -168,30 +168,8 @@ impl Monitor for MonitorService {
         .map_err(|e| Status::internal(e.to_string()))?
         .get("id");
 
-        sqlx::query(
-            "INSERT INTO metrics
-             (id, node_id, cpu_percent, mem_total, mem_used, swap_total, swap_used,
-              load1, load5, load15, uptime_secs, reported_at)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, to_timestamp($12))",
-        )
-        .bind(self.next_id())
-        .bind(node_id)
-        .bind(m.cpu_percent)
-        .bind(m.mem_total as i64)
-        .bind(m.mem_used as i64)
-        .bind(m.swap_total as i64)
-        .bind(m.swap_used as i64)
-        .bind(m.load1)
-        .bind(m.load5)
-        .bind(m.load15)
-        .bind(node.uptime_secs as i64)
-        .bind(req.timestamp)
-        .execute(&self.db)
-        .await
-        .map_err(|e| Status::internal(e.to_string()))?;
-
-        // 若 agent 上报了延迟数据，更新节点延迟字段
-        if !req.latencies.is_empty() {
+        // 提取延迟数据（同时写入 metrics 和 nodes）
+        let (lat_cu, lat_cm, lat_ct) = if !req.latencies.is_empty() {
             let mut cu = None::<f32>;
             let mut cm = None::<f32>;
             let mut ct = None::<f32>;
@@ -208,13 +186,46 @@ impl Monitor for MonitorService {
                     _ => {}
                 }
             }
+            (cu, cm, ct)
+        } else {
+            (None, None, None)
+        };
+
+        sqlx::query(
+            "INSERT INTO metrics
+             (id, node_id, cpu_percent, mem_total, mem_used, swap_total, swap_used,
+              load1, load5, load15, uptime_secs, reported_at,
+              latency_cu_ms, latency_cm_ms, latency_ct_ms)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, to_timestamp($12), $13, $14, $15)",
+        )
+        .bind(self.next_id())
+        .bind(node_id)
+        .bind(m.cpu_percent)
+        .bind(m.mem_total as i64)
+        .bind(m.mem_used as i64)
+        .bind(m.swap_total as i64)
+        .bind(m.swap_used as i64)
+        .bind(m.load1)
+        .bind(m.load5)
+        .bind(m.load15)
+        .bind(node.uptime_secs as i64)
+        .bind(req.timestamp)
+        .bind(lat_cu)
+        .bind(lat_cm)
+        .bind(lat_ct)
+        .execute(&self.db)
+        .await
+        .map_err(|e| Status::internal(e.to_string()))?;
+
+        // 若有延迟数据，同时更新 nodes 表当前值
+        if lat_cu.is_some() || lat_cm.is_some() || lat_ct.is_some() {
             sqlx::query(
                 "UPDATE nodes SET latency_cu_ms = $1, latency_cm_ms = $2, latency_ct_ms = $3,
                  latency_updated_at = NOW() WHERE id = $4",
             )
-            .bind(cu)
-            .bind(cm)
-            .bind(ct)
+            .bind(lat_cu)
+            .bind(lat_cm)
+            .bind(lat_ct)
             .bind(node_id)
             .execute(&self.db)
             .await
@@ -255,6 +266,9 @@ impl Monitor for MonitorService {
                 "load5": m.load5,
                 "load15": m.load15,
                 "uptime_secs": node.uptime_secs as i64,
+                "latency_cu_ms": lat_cu,
+                "latency_cm_ms": lat_cm,
+                "latency_ct_ms": lat_ct,
             },
         })) {
             let _ = self.event_tx.send(payload);
@@ -354,6 +368,9 @@ struct MetricRow {
     load15: f32,
     uptime_secs: i64,
     reported_at: DateTime<Utc>,
+    latency_cu_ms: Option<f32>,
+    latency_cm_ms: Option<f32>,
+    latency_ct_ms: Option<f32>,
 }
 
 #[derive(Serialize)]
@@ -369,6 +386,9 @@ struct MetricResponse {
     load15: f32,
     uptime_secs: i64,
     reported_at: DateTime<Utc>,
+    latency_cu_ms: Option<f32>,
+    latency_cm_ms: Option<f32>,
+    latency_ct_ms: Option<f32>,
 }
 
 impl From<MetricRow> for MetricResponse {
@@ -385,6 +405,9 @@ impl From<MetricRow> for MetricResponse {
             load15: r.load15,
             uptime_secs: r.uptime_secs,
             reported_at: r.reported_at,
+            latency_cu_ms: r.latency_cu_ms,
+            latency_cm_ms: r.latency_cm_ms,
+            latency_ct_ms: r.latency_ct_ms,
         }
     }
 }
@@ -497,7 +520,8 @@ async fn node_metrics(
     let node_id: i64 = id.parse().map_err(|_| StatusCode::BAD_REQUEST)?;
     let rows = sqlx::query_as::<_, MetricRow>(
         "SELECT id, cpu_percent, mem_total, mem_used, swap_total, swap_used,
-                load1, load5, load15, uptime_secs, reported_at
+                load1, load5, load15, uptime_secs, reported_at,
+                latency_cu_ms, latency_cm_ms, latency_ct_ms
          FROM metrics
          WHERE node_id = $1
          ORDER BY reported_at DESC
@@ -872,6 +896,15 @@ async fn init_schema(pool: &PgPool) -> Result<()> {
     .execute(pool)
     .await?;
     sqlx::query("ALTER TABLE nodes ADD COLUMN IF NOT EXISTS cpu_model TEXT")
+        .execute(pool)
+        .await?;
+    sqlx::query("ALTER TABLE metrics ADD COLUMN IF NOT EXISTS latency_cu_ms REAL")
+        .execute(pool)
+        .await?;
+    sqlx::query("ALTER TABLE metrics ADD COLUMN IF NOT EXISTS latency_cm_ms REAL")
+        .execute(pool)
+        .await?;
+    sqlx::query("ALTER TABLE metrics ADD COLUMN IF NOT EXISTS latency_ct_ms REAL")
         .execute(pool)
         .await?;
 

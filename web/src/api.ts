@@ -67,6 +67,9 @@ export interface Metric {
   load15: number;
   uptime_secs: number;
   reported_at: string;
+  latency_cu_ms: number | null;
+  latency_cm_ms: number | null;
+  latency_ct_ms: number | null;
 }
 
 export interface AgentToken {

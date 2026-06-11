@@ -111,8 +111,17 @@ export default function NodeDetail() {
         load1: parseFloat(m.load1.toFixed(2)),
         load5: parseFloat(m.load5.toFixed(2)),
         load15: parseFloat(m.load15.toFixed(2)),
+        cu: m.latency_cu_ms != null && m.latency_cu_ms >= 0 ? parseFloat(m.latency_cu_ms.toFixed(1)) : null,
+        cm: m.latency_cm_ms != null && m.latency_cm_ms >= 0 ? parseFloat(m.latency_cm_ms.toFixed(1)) : null,
+        ct: m.latency_ct_ms != null && m.latency_ct_ms >= 0 ? parseFloat(m.latency_ct_ms.toFixed(1)) : null,
       })),
     [metrics],
+  );
+
+  // 只要有任意延迟历史数据就显示图表
+  const hasLatencyHistory = useMemo(
+    () => chartData.some((d) => d.cu != null || d.cm != null || d.ct != null),
+    [chartData],
   );
 
   return (
@@ -261,6 +270,36 @@ export default function NodeDetail() {
                     </ChartContainer>
                   </CardContent>
                 </Card>
+
+                {/* 三网延迟趋势 */}
+                {hasLatencyHistory && (
+                  <Card>
+                    <CardHeader>
+                      <CardTitle>三网延迟趋势</CardTitle>
+                      <CardDescription>联通 / 移动 / 电信（ms）</CardDescription>
+                    </CardHeader>
+                    <CardContent>
+                      <ChartContainer
+                        config={{
+                          cu: { label: "联通", color: "hsl(var(--chart-1))" },
+                          cm: { label: "移动", color: "hsl(var(--chart-2))" },
+                          ct: { label: "电信", color: "hsl(var(--chart-3))" },
+                        } satisfies ChartConfig}
+                        className="w-full"
+                      >
+                        <LineChart data={chartData} margin={{ top: 4, right: 8, bottom: 0, left: 0 }}>
+                          <CartesianGrid strokeDasharray="3 3" stroke="rgba(128,128,128,0.15)" />
+                          <XAxis dataKey="time" tick={{ fontSize: 10 }} interval="preserveStartEnd" />
+                          <YAxis tickFormatter={(v) => `${v}`} tick={{ fontSize: 10 }} width={42} unit=" ms" />
+                          <ChartTooltip content={<ChartTooltipContent formatter={(v) => [`${v} ms`]} />} />
+                          <Line type="monotone" dataKey="cu" stroke="var(--color-cu)" dot={false} strokeWidth={1.5} connectNulls={false} />
+                          <Line type="monotone" dataKey="cm" stroke="var(--color-cm)" dot={false} strokeWidth={1.5} connectNulls={false} />
+                          <Line type="monotone" dataKey="ct" stroke="var(--color-ct)" dot={false} strokeWidth={1.5} connectNulls={false} />
+                        </LineChart>
+                      </ChartContainer>
+                    </CardContent>
+                  </Card>
+                )}
               </div>
             )}
           </>
