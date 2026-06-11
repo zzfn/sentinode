@@ -1,5 +1,6 @@
 use anyhow::Result;
 use clap::Parser;
+use rustls::crypto::ring;
 use common::monitor_client::MonitorClient;
 use common::{DiskStat, Metrics, NetStat, NodeInfo, ReportRequest};
 use local_ip_address::local_ip;
@@ -40,6 +41,7 @@ fn build_channel(server: &str) -> Result<Channel> {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    ring::default_provider().install_default().ok();
     tracing_subscriber::fmt::init();
     let cli = Cli::parse();
 
