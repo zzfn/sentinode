@@ -1,3 +1,9 @@
+// Bun build 通过 --define 将 process.env.API_BASE 替换为字符串常量
+declare const process: { env: { API_BASE?: string } };
+
+export const SERVER_URL = process.env.API_BASE ?? "";
+const BASE = SERVER_URL + "/api";
+
 export interface Node {
   id: string;
   hostname: string;
@@ -28,45 +34,6 @@ export interface AgentToken {
   created_at: string;
 }
 
-export const SERVER_URL = process.env.API_BASE ?? "";
-const BASE = SERVER_URL + "/api";
-
-async function checkResponse(res: Response): Promise<Response> {
-  if (!res.ok) {
-    const body = await res.json().catch(() => null);
-    throw new Error(body?.error ?? `HTTP ${res.status}`);
-  }
-  return res;
-}
-
-export async function fetchNodes(): Promise<Node[]> {
-  const res = await fetch(`${BASE}/nodes`).then(checkResponse);
-  return res.json();
-}
-
-export async function fetchMetrics(id: string, limit = 60): Promise<Metric[]> {
-  const res = await fetch(`${BASE}/nodes/${id}/metrics?limit=${limit}`).then(checkResponse);
-  return res.json();
-}
-
-export async function fetchTokens(): Promise<AgentToken[]> {
-  const res = await fetch(`${BASE}/tokens`).then(checkResponse);
-  return res.json();
-}
-
-export async function createToken(name: string): Promise<AgentToken> {
-  const res = await fetch(`${BASE}/tokens`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ name }),
-  }).then(checkResponse);
-  return res.json();
-}
-
-export async function deleteToken(id: string): Promise<void> {
-  await fetch(`${BASE}/tokens/${id}`, { method: "DELETE" }).then(checkResponse);
-}
-
 export function fmtBytes(bytes: number): string {
   const gb = bytes / 1024 / 1024 / 1024;
   return gb >= 1 ? `${gb.toFixed(1)} GB` : `${(bytes / 1024 / 1024).toFixed(0)} MB`;
@@ -79,4 +46,61 @@ export function fmtUptime(secs: number): string {
   if (d > 0) return `${d}d ${h}h`;
   if (h > 0) return `${h}h ${m}m`;
   return `${m}m`;
+}
+
+export async function fetchNodes(): Promise<Node[]> {
+  const r = await fetch(`${BASE}/nodes`);
+  if (!r.ok) throw new Error(`HTTP ${r.status}`);
+  return r.json();
+}
+
+export async function fetchMetrics(id: string, limit = 60): Promise<Metric[]> {
+  const r = await fetch(`${BASE}/nodes/${id}/metrics?limit=${limit}`);
+  if (!r.ok) throw new Error(`HTTP ${r.status}`);
+  return r.json();
+}
+
+export async function fetchTokens(): Promise<AgentToken[]> {
+  const r = await fetch(`${BASE}/tokens`, { credentials: "include" });
+  if (!r.ok) throw new Error(`HTTP ${r.status}`);
+  return r.json();
+}
+
+export async function createToken(name: string): Promise<AgentToken> {
+  const r = await fetch(`${BASE}/tokens`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    credentials: "include",
+    body: JSON.stringify({ name }),
+  });
+  if (r.status === 401) throw new Error("401");
+  if (!r.ok) throw new Error(`HTTP ${r.status}`);
+  return r.json();
+}
+
+export async function deleteToken(id: string): Promise<void> {
+  const r = await fetch(`${BASE}/tokens/${id}`, {
+    method: "DELETE",
+    credentials: "include",
+  });
+  if (r.status === 401) throw new Error("401");
+  if (!r.ok) throw new Error(`HTTP ${r.status}`);
+}
+
+export async function adminLogin(password: string): Promise<void> {
+  const r = await fetch(`${BASE}/admin/login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    credentials: "include",
+    body: JSON.stringify({ password }),
+  });
+  if (r.status === 401) throw new Error("密码错误");
+  if (!r.ok) throw new Error(`HTTP ${r.status}`);
+}
+
+export async function adminLogout(): Promise<void> {
+  await fetch(`${BASE}/admin/logout`, {
+    method: "POST",
+    credentials: "include",
+  });
 }

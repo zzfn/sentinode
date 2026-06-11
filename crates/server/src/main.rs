@@ -1,8 +1,8 @@
 use anyhow::Result;
 use axum::{
     extract::{Path, Query, State},
-    http::StatusCode,
-    routing::get,
+    http::{HeaderMap, HeaderValue, StatusCode},
+    routing::{get, post},
     Json, Router,
 };
 use chrono::{DateTime, Utc};
@@ -169,6 +169,7 @@ struct AppState {
     db: PgPool,
     id_gen: Arc<Mutex<SnowflakeGen>>,
     token_set: Arc<std::sync::RwLock<HashSet<String>>>,
+    admin_token: String,
 }
 
 #[derive(FromRow)]
@@ -298,6 +299,62 @@ struct CreateTokenReq {
 
 // ── REST 处理函数 ─────────────────────────────────────────────────────────────
 
+const SESSION_COOKIE: &str = "sn_session";
+
+fn check_session(headers: &HeaderMap, admin_token: &str) -> Result<(), StatusCode> {
+    let cookies = headers
+        .get(axum::http::header::COOKIE)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    let valid = cookies.split(';').any(|c| {
+        let c = c.trim();
+        c == format!("{SESSION_COOKIE}={admin_token}")
+    });
+    if valid {
+        Ok(())
+    } else {
+        Err(StatusCode::UNAUTHORIZED)
+    }
+}
+
+#[derive(serde::Deserialize)]
+struct LoginReq {
+    password: String,
+}
+
+async fn admin_login(
+    State(s): State<AppState>,
+    Json(req): Json<LoginReq>,
+) -> Result<axum::response::Response, StatusCode> {
+    if req.password != s.admin_token {
+        return Err(StatusCode::UNAUTHORIZED);
+    }
+    let cookie = format!(
+        "{SESSION_COOKIE}={}; Path=/; HttpOnly; SameSite=Strict; Max-Age=86400",
+        s.admin_token
+    );
+    Ok(axum::response::Response::builder()
+        .status(StatusCode::OK)
+        .header(
+            axum::http::header::SET_COOKIE,
+            HeaderValue::from_str(&cookie).unwrap(),
+        )
+        .body(axum::body::Body::from("{}"))
+        .unwrap())
+}
+
+async fn admin_logout() -> axum::response::Response {
+    let clear = format!("{SESSION_COOKIE}=; Path=/; HttpOnly; Max-Age=0");
+    axum::response::Response::builder()
+        .status(StatusCode::OK)
+        .header(
+            axum::http::header::SET_COOKIE,
+            HeaderValue::from_str(&clear).unwrap(),
+        )
+        .body(axum::body::Body::from("{}"))
+        .unwrap()
+}
+
 async fn healthz() -> &'static str {
     "ok"
 }
@@ -336,8 +393,12 @@ async fn node_metrics(
     Ok(Json(rows.into_iter().map(Into::into).collect()))
 }
 
-/// 列出所有已注册的 token
-async fn list_tokens(State(s): State<AppState>) -> Result<Json<Vec<TokenResponse>>, StatusCode> {
+/// 列出所有已注册的 token（需要 session）
+async fn list_tokens(
+    State(s): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<Vec<TokenResponse>>, StatusCode> {
+    check_session(&headers, &s.admin_token)?;
     let rows = sqlx::query_as::<_, TokenRow>(
         "SELECT id, name, token, created_at FROM tokens ORDER BY created_at DESC",
     )
@@ -350,8 +411,10 @@ async fn list_tokens(State(s): State<AppState>) -> Result<Json<Vec<TokenResponse
 /// 创建新 token，使用 UUID v4 生成随机串
 async fn create_token(
     State(s): State<AppState>,
+    headers: HeaderMap,
     Json(req): Json<CreateTokenReq>,
 ) -> Result<Json<TokenResponse>, StatusCode> {
+    check_session(&headers, &s.admin_token)?;
     let id = s.id_gen.lock().unwrap().next();
     let token = Uuid::new_v4().to_string().replace('-', "");
     sqlx::query("INSERT INTO tokens (id, name, token) VALUES ($1, $2, $3)")
@@ -379,8 +442,10 @@ async fn create_token(
 /// 删除指定 id 的 token，同时从内存 set 中移除
 async fn delete_token(
     State(s): State<AppState>,
+    headers: HeaderMap,
     Path(id): Path<String>,
 ) -> Result<StatusCode, StatusCode> {
+    check_session(&headers, &s.admin_token)?;
     let id: i64 = id.parse().map_err(|_| StatusCode::BAD_REQUEST)?;
     // 先取出 token 值以便从内存 set 中删除
     let row: Option<(String,)> = sqlx::query_as("SELECT token FROM tokens WHERE id = $1")
@@ -536,10 +601,13 @@ async fn main() -> Result<()> {
         .route("/api/nodes/{id}/metrics", get(node_metrics))
         .route("/api/tokens", get(list_tokens).post(create_token))
         .route("/api/tokens/{id}", axum::routing::delete(delete_token))
+        .route("/api/admin/login", post(admin_login))
+        .route("/api/admin/logout", post(admin_logout))
         .with_state(AppState {
             db: pool,
             id_gen,
             token_set,
+            admin_token: cli.token.clone(),
         })
         .layer(CorsLayer::permissive())
         .fallback_service(grpc_router);

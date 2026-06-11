@@ -1,74 +1,130 @@
 import { useEffect, useState } from "react";
 import { Link } from "wouter";
-import { AgentToken, SERVER_URL, createToken, deleteToken, fetchTokens } from "../api";
+import {
+  AgentToken, SERVER_URL,
+  adminLogin, adminLogout,
+  createToken, deleteToken, fetchTokens,
+} from "../api";
+import { Alert, AlertDescription } from "../components/ui/alert";
+import { Button } from "../components/ui/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../components/ui/card";
+import { Input } from "../components/ui/input";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../components/ui/table";
 
 const INSTALL_SCRIPT_URL =
   "https://raw.githubusercontent.com/zzfn/sentinode/main/scripts/install.sh";
 
-// 生成一行 curl 安装命令
 function buildScript(serverUrl: string, token: string): string {
   return `curl -fsSL ${INSTALL_SCRIPT_URL} | sh -s -- \\
   --server ${serverUrl} \\
   --token ${token}`;
 }
 
-export default function Admin() {
-  const serverUrl = SERVER_URL;
+// ── 登录页 ────────────────────────────────────────────────────────────────────
 
-  // 已注册的 token 列表
-  const [tokens, setTokens] = useState<AgentToken[]>([]);
-
-  // 新建 token 时输入的 name
-  const [newName, setNewName] = useState("");
-
-  // 提交后展示的安装脚本（null 表示还未生成）
-  const [script, setScript] = useState<string | null>(null);
-
-  // 错误信息
+function LoginPage({ onLogin }: { onLogin: () => void }) {
+  const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
 
-  // 复制成功提示
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!password.trim()) return;
+    setError(null);
+    setLoading(true);
+    try {
+      await adminLogin(password);
+      onLogin();
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : "登录失败");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <div className="min-h-screen flex items-center justify-center bg-background px-4">
+      <Card className="w-full max-w-sm">
+        <CardHeader className="space-y-1">
+          <CardTitle className="text-2xl font-bold text-center">管理后台</CardTitle>
+          <CardDescription className="text-center">请输入管理员密码</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <form onSubmit={handleSubmit} className="space-y-4">
+            {error && (
+              <Alert variant="destructive">
+                <AlertDescription>{error}</AlertDescription>
+              </Alert>
+            )}
+            <Input
+              type="password"
+              placeholder="管理员密码"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              autoFocus
+            />
+            <Button type="submit" className="w-full" disabled={loading}>
+              {loading ? "验证中…" : "登录"}
+            </Button>
+          </form>
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
+// ── 管理面板 ──────────────────────────────────────────────────────────────────
+
+function AdminPanel({ onLogout }: { onLogout: () => void }) {
+  const serverUrl = SERVER_URL;
+  const [tokens, setTokens] = useState<AgentToken[]>([]);
+  const [newName, setNewName] = useState("");
+  const [script, setScript] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const [creating, setCreating] = useState(false);
 
-  // 加载 token 列表
   useEffect(() => {
     fetchTokens()
       .then(setTokens)
       .catch((e: Error) => setError(e.message));
   }, []);
 
-  // 提交添加 Agent
+  async function handleLogout() {
+    await adminLogout();
+    onLogout();
+  }
+
   async function handleCreate() {
     const name = newName.trim();
     if (!name) return;
     setError(null);
+    setCreating(true);
     try {
       const tok = await createToken(name);
       setTokens((prev) => [tok, ...prev]);
       setNewName("");
-      // 生成安装脚本
       setScript(buildScript(serverUrl, tok.token));
     } catch (e: unknown) {
+      if (e instanceof Error && e.message === "401") return onLogout();
       setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setCreating(false);
     }
   }
 
-  // 删除 Agent token
   async function handleDelete(id: string, tokenVal: string) {
     setError(null);
     try {
       await deleteToken(id);
       setTokens((prev) => prev.filter((t) => t.id !== id));
-      // 如果当前展示的脚本正是该 token，清除脚本
-      if (script?.includes(tokenVal)) {
-        setScript(null);
-      }
+      if (script?.includes(tokenVal)) setScript(null);
     } catch (e: unknown) {
+      if (e instanceof Error && e.message === "401") return onLogout();
       setError(e instanceof Error ? e.message : String(e));
     }
   }
 
-  // 复制脚本到剪贴板
   async function handleCopy() {
     if (!script) return;
     try {
@@ -81,173 +137,129 @@ export default function Admin() {
   }
 
   return (
-    <div style={{ maxWidth: 860, margin: "0 auto", padding: "24px 16px", fontFamily: "system-ui, sans-serif" }}>
-      {/* 顶部导航 */}
-      <div style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: 24 }}>
-        <Link href="/" style={{ color: "#3b82f6", textDecoration: "none", fontSize: 14 }}>
-          ← 返回
-        </Link>
-        <h1 style={{ margin: 0, fontSize: 22, fontWeight: 700 }}>管理后台</h1>
-      </div>
-
-      {/* 错误提示 */}
-      {error && (
-        <div
-          style={{
-            background: "#fee2e2",
-            border: "1px solid #fca5a5",
-            color: "#dc2626",
-            borderRadius: 6,
-            padding: "10px 14px",
-            marginBottom: 20,
-            fontSize: 14,
-          }}
-        >
-          {error}
-        </div>
-      )}
-
-      {/* 已注册 Agent 列表 */}
-      <section style={{ marginBottom: 32 }}>
-        <h2 style={{ fontSize: 16, fontWeight: 600, marginBottom: 10 }}>已注册 Agent</h2>
-        {tokens.length === 0 ? (
-          <p style={{ color: "#9ca3af", fontSize: 14 }}>暂无已注册的 Agent</p>
-        ) : (
-          <table
-            style={{
-              width: "100%",
-              borderCollapse: "collapse",
-              fontSize: 14,
-            }}
-          >
-            <thead>
-              <tr style={{ background: "#f9fafb", textAlign: "left" }}>
-                <th style={thStyle}>名称</th>
-                <th style={thStyle}>Token</th>
-                <th style={thStyle}>注册时间</th>
-                <th style={thStyle}>操作</th>
-              </tr>
-            </thead>
-            <tbody>
-              {tokens.map((tok) => (
-                <tr key={tok.id} style={{ borderBottom: "1px solid #e5e7eb" }}>
-                  <td style={tdStyle}>{tok.name}</td>
-                  <td style={{ ...tdStyle, fontFamily: "monospace", fontSize: 12, wordBreak: "break-all" }}>
-                    {tok.token}
-                  </td>
-                  <td style={tdStyle}>{new Date(tok.created_at).toLocaleString("zh-CN")}</td>
-                  <td style={tdStyle}>
-                    <button
-                      onClick={() => handleDelete(tok.id, tok.token)}
-                      style={{
-                        background: "#ef4444",
-                        color: "#fff",
-                        border: "none",
-                        borderRadius: 4,
-                        padding: "4px 10px",
-                        cursor: "pointer",
-                        fontSize: 12,
-                      }}
-                    >
-                      删除
-                    </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-      </section>
-
-      {/* 添加 Agent */}
-      <section style={{ marginBottom: 32 }}>
-        <h2 style={{ fontSize: 16, fontWeight: 600, marginBottom: 10 }}>添加 Agent</h2>
-        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-          <input
-            type="text"
-            value={newName}
-            onChange={(e) => setNewName(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && handleCreate()}
-            placeholder="Agent 名称（如：my-server-01）"
-            style={{
-              flex: 1,
-              maxWidth: 320,
-              padding: "8px 12px",
-              border: "1px solid #d1d5db",
-              borderRadius: 6,
-              fontSize: 14,
-              boxSizing: "border-box",
-            }}
-          />
-          <button
-            onClick={handleCreate}
-            style={{
-              background: "#3b82f6",
-              color: "#fff",
-              border: "none",
-              borderRadius: 6,
-              padding: "8px 18px",
-              cursor: "pointer",
-              fontSize: 14,
-              fontWeight: 600,
-            }}
-          >
-            提交
-          </button>
-        </div>
-      </section>
-
-      {/* 安装脚本展示区 */}
-      {script && (
-        <section>
-          <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 8 }}>
-            <h2 style={{ fontSize: 16, fontWeight: 600, margin: 0 }}>安装命令</h2>
-            <button
-              onClick={handleCopy}
-              style={{
-                background: copied ? "#22c55e" : "#6b7280",
-                color: "#fff",
-                border: "none",
-                borderRadius: 4,
-                padding: "4px 12px",
-                cursor: "pointer",
-                fontSize: 12,
-                transition: "background 0.2s",
-              }}
-            >
-              {copied ? "已复制" : "复制"}
-            </button>
+    <div className="min-h-screen bg-background">
+      <header className="border-b bg-card">
+        <div className="max-w-4xl mx-auto px-4 h-14 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <Link href="/" className="text-sm text-muted-foreground hover:text-foreground transition-colors">
+              ← 返回首页
+            </Link>
+            <span className="text-border">|</span>
+            <h1 className="text-base font-semibold">管理后台</h1>
           </div>
-          <pre
-            style={{
-              background: "#1e1e1e",
-              color: "#d4d4d4",
-              borderRadius: 8,
-              padding: "16px 20px",
-              overflowX: "auto",
-              fontSize: 12,
-              lineHeight: 1.6,
-              margin: 0,
-              whiteSpace: "pre",
-            }}
-          >
-            {script}
-          </pre>
-        </section>
-      )}
+          <Button variant="outline" size="sm" onClick={handleLogout}>退出登录</Button>
+        </div>
+      </header>
+
+      <main className="max-w-4xl mx-auto px-4 py-8 space-y-6">
+        {error && (
+          <Alert variant="destructive">
+            <AlertDescription>{error}</AlertDescription>
+          </Alert>
+        )}
+
+        <Card>
+          <CardHeader>
+            <CardTitle>已注册 Agent</CardTitle>
+            <CardDescription>共 {tokens.length} 个 Agent Token</CardDescription>
+          </CardHeader>
+          <CardContent>
+            {tokens.length === 0 ? (
+              <p className="text-sm text-muted-foreground py-4 text-center">暂无已注册的 Agent</p>
+            ) : (
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>名称</TableHead>
+                    <TableHead>Token</TableHead>
+                    <TableHead>注册时间</TableHead>
+                    <TableHead className="w-20">操作</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {tokens.map((tok) => (
+                    <TableRow key={tok.id}>
+                      <TableCell className="font-medium">{tok.name}</TableCell>
+                      <TableCell>
+                        <code className="text-xs font-mono bg-muted px-1.5 py-0.5 rounded break-all">
+                          {tok.token}
+                        </code>
+                      </TableCell>
+                      <TableCell className="text-muted-foreground text-xs whitespace-nowrap">
+                        {new Date(tok.created_at).toLocaleString("zh-CN")}
+                      </TableCell>
+                      <TableCell>
+                        <Button variant="destructive" size="sm" onClick={() => handleDelete(tok.id, tok.token)}>
+                          删除
+                        </Button>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            )}
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle>添加 Agent</CardTitle>
+            <CardDescription>输入名称生成新 Token 并获取安装命令</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="flex gap-3">
+              <Input
+                type="text"
+                value={newName}
+                onChange={(e) => setNewName(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && handleCreate()}
+                placeholder="Agent 名称（如：my-server-01）"
+                className="max-w-xs"
+              />
+              <Button onClick={handleCreate} disabled={creating || !newName.trim()}>
+                {creating ? "生成中…" : "生成 Token"}
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+
+        {script && (
+          <Card>
+            <CardHeader>
+              <div className="flex items-center justify-between">
+                <div>
+                  <CardTitle>安装命令</CardTitle>
+                  <CardDescription className="mt-1">在目标服务器上运行</CardDescription>
+                </div>
+                <Button variant={copied ? "secondary" : "outline"} size="sm" onClick={handleCopy}>
+                  {copied ? "已复制" : "复制"}
+                </Button>
+              </div>
+            </CardHeader>
+            <CardContent>
+              <pre className="bg-[#1e1e1e] text-[#d4d4d4] rounded-lg p-4 overflow-x-auto text-xs leading-relaxed whitespace-pre font-mono">
+                {script}
+              </pre>
+            </CardContent>
+          </Card>
+        )}
+      </main>
     </div>
   );
 }
 
-// 表格样式复用
-const thStyle: React.CSSProperties = {
-  padding: "8px 12px",
-  fontWeight: 600,
-  borderBottom: "1px solid #e5e7eb",
-  whiteSpace: "nowrap",
-};
+// ── 入口：根据 session 状态切换 ───────────────────────────────────────────────
 
-const tdStyle: React.CSSProperties = {
-  padding: "8px 12px",
-  verticalAlign: "middle",
-};
+export default function Admin() {
+  const [loggedIn, setLoggedIn] = useState(false);
+
+  // 尝试用已有 cookie 加载 token 列表来判断是否已登录
+  useEffect(() => {
+    fetchTokens()
+      .then(() => setLoggedIn(true))
+      .catch(() => setLoggedIn(false));
+  }, []);
+
+  if (!loggedIn) return <LoginPage onLogin={() => setLoggedIn(true)} />;
+  return <AdminPanel onLogout={() => setLoggedIn(false)} />;
+}
