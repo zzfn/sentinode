@@ -234,7 +234,7 @@ impl Monitor for MonitorService {
 
         // 查询完整节点信息（用于广播和返回开关状态）
         let row = sqlx::query_as::<_, NodeRow>(
-            "SELECT id, hostname, ip, os, arch, last_seen, expires_at, price, price_currency, website_url, latency_test_enabled, latency_cu_ms, latency_cm_ms, latency_ct_ms, latency_updated_at, NULL::BIGINT AS token_id, NULL::TEXT AS token_name, NULL::TEXT AS token_value, n.cpu_model FROM nodes WHERE id = $1",
+            "SELECT id, hostname, ip, os, arch, last_seen, expires_at, price, price_currency, website_url, latency_test_enabled, latency_cu_ms, latency_cm_ms, latency_ct_ms, latency_updated_at, NULL::BIGINT AS token_id, NULL::TEXT AS token_name, NULL::TEXT AS token_value, cpu_model FROM nodes WHERE id = $1",
         )
         .bind(node_id)
         .fetch_one(&self.db)
@@ -464,7 +464,7 @@ async fn get_node(
 ) -> Result<Json<NodeResponse>, StatusCode> {
     let id: i64 = id.parse().map_err(|_| StatusCode::BAD_REQUEST)?;
     let row = sqlx::query_as::<_, NodeRow>(
-        "SELECT id, hostname, ip, os, arch, last_seen, expires_at, price, price_currency, website_url, latency_test_enabled, latency_cu_ms, latency_cm_ms, latency_ct_ms, latency_updated_at, NULL::BIGINT AS token_id, NULL::TEXT AS token_name, NULL::TEXT AS token_value, n.cpu_model FROM nodes WHERE id = $1",
+        "SELECT id, hostname, ip, os, arch, last_seen, expires_at, price, price_currency, website_url, latency_test_enabled, latency_cu_ms, latency_cm_ms, latency_ct_ms, latency_updated_at, NULL::BIGINT AS token_id, NULL::TEXT AS token_name, NULL::TEXT AS token_value, cpu_model FROM nodes WHERE id = $1",
     )
     .bind(id)
     .fetch_optional(&s.db)
