@@ -42,16 +42,18 @@ async fn self_upgrade(http: &reqwest::Client) -> Result<()> {
         }
     };
 
-    let release: GithubRelease = http
+    let resp = http
         .get("https://api.github.com/repos/zzfn/sentinode/releases/latest")
         .header(
             "User-Agent",
             concat!("sentinode-agent/", env!("CARGO_PKG_VERSION")),
         )
         .send()
-        .await?
-        .json()
         .await?;
+    if !resp.status().is_success() {
+        anyhow::bail!("GitHub API error: {}", resp.status());
+    }
+    let release: GithubRelease = resp.json().await?;
 
     let latest = release.tag_name.trim_start_matches('v');
     let current = env!("CARGO_PKG_VERSION");
@@ -76,7 +78,12 @@ async fn self_upgrade(http: &reqwest::Client) -> Result<()> {
 
     info!("self-upgrade: v{current} → v{latest}, downloading {asset_name}...");
 
-    let bytes = http.get(url).send().await?.bytes().await?;
+    // P2: 检查下载状态
+    let dl = http.get(url).send().await?;
+    if !dl.status().is_success() {
+        anyhow::bail!("download failed: {}", dl.status());
+    }
+    let bytes = dl.bytes().await?;
 
     // 写入与当前二进制同目录的临时文件，rename 在同分区上是原子操作
     let current_exe = std::env::current_exe()?;
@@ -89,16 +96,32 @@ async fn self_upgrade(http: &reqwest::Client) -> Result<()> {
         tokio::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o755)).await?;
     }
 
-    tokio::fs::rename(&tmp, &current_exe).await?;
+    // P3: rename 失败时清理临时文件
+    if let Err(e) = tokio::fs::rename(&tmp, &current_exe).await {
+        let _ = tokio::fs::remove_file(&tmp).await;
+        return Err(e.into());
+    }
     info!("self-upgrade: done (v{latest}), re-executing...");
 
-    // re-exec：启动新二进制（继承相同参数），当前进程退出
+    // P1: exec() 原地替换进程（保持 PID），systemd 不感知父进程退出
     let args: Vec<String> = std::env::args().collect();
-    std::process::Command::new(&current_exe)
-        .args(&args[1..])
-        .spawn()
-        .map_err(|e| anyhow::anyhow!("failed to re-exec: {e}"))?;
-    std::process::exit(0);
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        let err = std::process::Command::new(&current_exe)
+            .args(&args[1..])
+            .exec();
+        // exec 成功不会返回；走到这里说明失败
+        return Err(anyhow::anyhow!("re-exec failed: {err}"));
+    }
+    #[cfg(not(unix))]
+    {
+        std::process::Command::new(&current_exe)
+            .args(&args[1..])
+            .spawn()
+            .map_err(|e| anyhow::anyhow!("re-exec failed: {e}"))?;
+        std::process::exit(0);
+    }
 }
 
 const LATENCY_TARGETS: &[(&str, &str)] = &[
