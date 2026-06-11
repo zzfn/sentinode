@@ -2,7 +2,6 @@ import { useEffect, useState } from "react";
 import { Link } from "wouter";
 import {
   AgentToken, SERVER_URL,
-  adminLogin, adminLogout,
   createToken, deleteToken, fetchTokens,
 } from "../api";
 import { Alert, AlertDescription } from "../components/ui/alert";
@@ -20,62 +19,7 @@ function buildScript(serverUrl: string, token: string): string {
   --token ${token}`;
 }
 
-// ── 登录页 ────────────────────────────────────────────────────────────────────
-
-function LoginPage({ onLogin }: { onLogin: () => void }) {
-  const [password, setPassword] = useState("");
-  const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
-
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    if (!password.trim()) return;
-    setError(null);
-    setLoading(true);
-    try {
-      await adminLogin(password);
-      onLogin();
-    } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : "登录失败");
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  return (
-    <div className="min-h-screen flex items-center justify-center bg-background px-4">
-      <Card className="w-full max-w-sm">
-        <CardHeader className="space-y-1">
-          <CardTitle className="text-2xl font-bold text-center">管理后台</CardTitle>
-          <CardDescription className="text-center">请输入管理员密码</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <form onSubmit={handleSubmit} className="space-y-4">
-            {error && (
-              <Alert variant="destructive">
-                <AlertDescription>{error}</AlertDescription>
-              </Alert>
-            )}
-            <Input
-              type="password"
-              placeholder="管理员密码"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              autoFocus
-            />
-            <Button type="submit" className="w-full" disabled={loading}>
-              {loading ? "验证中…" : "登录"}
-            </Button>
-          </form>
-        </CardContent>
-      </Card>
-    </div>
-  );
-}
-
-// ── 管理面板 ──────────────────────────────────────────────────────────────────
-
-function AdminPanel({ onLogout }: { onLogout: () => void }) {
+export default function Admin() {
   const serverUrl = SERVER_URL;
   const [tokens, setTokens] = useState<AgentToken[]>([]);
   const [newName, setNewName] = useState("");
@@ -90,11 +34,6 @@ function AdminPanel({ onLogout }: { onLogout: () => void }) {
       .catch((e: Error) => setError(e.message));
   }, []);
 
-  async function handleLogout() {
-    await adminLogout();
-    onLogout();
-  }
-
   async function handleCreate() {
     const name = newName.trim();
     if (!name) return;
@@ -106,7 +45,6 @@ function AdminPanel({ onLogout }: { onLogout: () => void }) {
       setNewName("");
       setScript(buildScript(serverUrl, tok.token));
     } catch (e: unknown) {
-      if (e instanceof Error && e.message === "401") return onLogout();
       setError(e instanceof Error ? e.message : String(e));
     } finally {
       setCreating(false);
@@ -120,7 +58,6 @@ function AdminPanel({ onLogout }: { onLogout: () => void }) {
       setTokens((prev) => prev.filter((t) => t.id !== id));
       if (script?.includes(tokenVal)) setScript(null);
     } catch (e: unknown) {
-      if (e instanceof Error && e.message === "401") return onLogout();
       setError(e instanceof Error ? e.message : String(e));
     }
   }
@@ -139,15 +76,12 @@ function AdminPanel({ onLogout }: { onLogout: () => void }) {
   return (
     <div className="min-h-screen bg-background">
       <header className="border-b bg-card">
-        <div className="max-w-4xl mx-auto px-4 h-14 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <Link href="/" className="text-sm text-muted-foreground hover:text-foreground transition-colors">
-              ← 返回首页
-            </Link>
-            <span className="text-border">|</span>
-            <h1 className="text-base font-semibold">管理后台</h1>
-          </div>
-          <Button variant="outline" size="sm" onClick={handleLogout}>退出登录</Button>
+        <div className="max-w-4xl mx-auto px-4 h-14 flex items-center gap-3">
+          <Link href="/" className="text-sm text-muted-foreground hover:text-foreground transition-colors">
+            ← 返回首页
+          </Link>
+          <span className="text-border">|</span>
+          <h1 className="text-base font-semibold">管理后台</h1>
         </div>
       </header>
 
@@ -246,20 +180,4 @@ function AdminPanel({ onLogout }: { onLogout: () => void }) {
       </main>
     </div>
   );
-}
-
-// ── 入口：根据 session 状态切换 ───────────────────────────────────────────────
-
-export default function Admin() {
-  const [loggedIn, setLoggedIn] = useState(false);
-
-  // 尝试用已有 cookie 加载 token 列表来判断是否已登录
-  useEffect(() => {
-    fetchTokens()
-      .then(() => setLoggedIn(true))
-      .catch(() => setLoggedIn(false));
-  }, []);
-
-  if (!loggedIn) return <LoginPage onLogin={() => setLoggedIn(true)} />;
-  return <AdminPanel onLogout={() => setLoggedIn(false)} />;
 }

@@ -61,7 +61,7 @@ export async function fetchMetrics(id: string, limit = 60): Promise<Metric[]> {
 }
 
 export async function fetchTokens(): Promise<AgentToken[]> {
-  const r = await fetch(`${BASE}/tokens`, { credentials: "include" });
+  const r = await fetch(`${BASE}/tokens`);
   if (!r.ok) throw new Error(`HTTP ${r.status}`);
   return r.json();
 }
@@ -70,37 +70,13 @@ export async function createToken(name: string): Promise<AgentToken> {
   const r = await fetch(`${BASE}/tokens`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    credentials: "include",
     body: JSON.stringify({ name }),
   });
-  if (r.status === 401) throw new Error("401");
   if (!r.ok) throw new Error(`HTTP ${r.status}`);
   return r.json();
 }
 
 export async function deleteToken(id: string): Promise<void> {
-  const r = await fetch(`${BASE}/tokens/${id}`, {
-    method: "DELETE",
-    credentials: "include",
-  });
-  if (r.status === 401) throw new Error("401");
+  const r = await fetch(`${BASE}/tokens/${id}`, { method: "DELETE" });
   if (!r.ok) throw new Error(`HTTP ${r.status}`);
-}
-
-export async function adminLogin(password: string): Promise<void> {
-  const r = await fetch(`${BASE}/admin/login`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    credentials: "include",
-    body: JSON.stringify({ password }),
-  });
-  if (r.status === 401) throw new Error("密码错误");
-  if (!r.ok) throw new Error(`HTTP ${r.status}`);
-}
-
-export async function adminLogout(): Promise<void> {
-  await fetch(`${BASE}/admin/logout`, {
-    method: "POST",
-    credentials: "include",
-  });
 }
