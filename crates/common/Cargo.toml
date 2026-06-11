@@ -1,0 +1,15 @@
+[package]
+name = "common"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+prost = "0.14.4"
+serde = { version = "1.0.228", features = ["derive"] }
+tonic = { version = "0.14.6", features = ["codegen"] }
+tonic-prost = "0.14.6"
+
+[build-dependencies]
+tonic-prost-build = "0.14.6"
+protoc-bin-vendored = "3.2.0"

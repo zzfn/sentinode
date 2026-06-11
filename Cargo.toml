@@ -1,0 +1,14 @@
+[workspace]
+resolver = "2"
+members = ["crates/common", "crates/agent", "crates/server"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+repository = "https://github.com/zzfn/sentinode"
+
+[profile.release]
+strip = true
+lto = true
+codegen-units = 1

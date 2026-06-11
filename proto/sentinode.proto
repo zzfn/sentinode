@@ -1,0 +1,50 @@
+syntax = "proto3";
+
+package sentinode.v1;
+
+message NodeInfo {
+  string hostname   = 1;
+  string ip         = 2;
+  string os         = 3;
+  string arch       = 4;
+  uint64 uptime_secs = 5;
+}
+
+message DiskStat {
+  string name        = 1;
+  uint64 total_bytes = 2;
+  uint64 used_bytes  = 3;
+}
+
+message NetStat {
+  string interface = 1;
+  uint64 rx_bytes  = 2;
+  uint64 tx_bytes  = 3;
+}
+
+message Metrics {
+  float  cpu_percent = 1;
+  uint64 mem_total   = 2;
+  uint64 mem_used    = 3;
+  uint64 swap_total  = 4;
+  uint64 swap_used   = 5;
+  float  load1       = 6;
+  float  load5       = 7;
+  float  load15      = 8;
+  repeated DiskStat disks    = 9;
+  repeated NetStat  networks = 10;
+}
+
+message ReportRequest {
+  NodeInfo node    = 1;
+  Metrics  metrics = 2;
+  int64    timestamp = 3;
+}
+
+message ReportResponse {
+  bool ok = 1;
+}
+
+service Monitor {
+  rpc Report(ReportRequest) returns (ReportResponse);
+}

@@ -1,0 +1,21 @@
+[package]
+name = "server"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "sentinode-server"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1.0.102"
+axum = "0.8.9"
+clap = { version = "4.6.1", features = ["derive", "env"] }
+common = { path = "../common" }
+prost = "0.14.4"
+sqlx = { version = "0.7", features = ["runtime-tokio-native-tls", "postgres"] }
+tokio = { version = "1.52.3", features = ["full"] }
+tonic = "0.14.6"
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
