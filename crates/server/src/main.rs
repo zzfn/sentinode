@@ -17,6 +17,7 @@ use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tonic::{async_trait, Request, Response, Status};
+use tonic::service::Routes as GrpcRoutes;
 use tower_http::cors::CorsLayer;
 use tracing::info;
 use uuid::Uuid;
@@ -79,11 +80,8 @@ struct Cli {
     #[arg(long, env = "SENTINODE_TOKEN")]
     token: String,
 
-    #[arg(long, env = "GRPC_PORT", default_value_t = 50051)]
-    grpc_port: u16,
-
-    #[arg(long, env = "HTTP_PORT", default_value_t = 8080)]
-    http_port: u16,
+    #[arg(long, env = "PORT", default_value_t = 8080)]
+    port: u16,
 
     #[arg(long, env = "METRICS_RETENTION_DAYS", default_value_t = 30)]
     retention_days: i64,
@@ -477,8 +475,6 @@ async fn main() -> Result<()> {
     init_schema(&pool).await?;
     info!("database schema ready");
 
-    let grpc_addr = format!("0.0.0.0:{}", cli.grpc_port).parse()?;
-
     // 保留任务
     let retention_pool = pool.clone();
     let retention_days = cli.retention_days;
@@ -502,50 +498,26 @@ async fn main() -> Result<()> {
         }
     });
 
-    // 构建共享的 id_gen 和 token_set
     let id_gen = Arc::new(Mutex::new(SnowflakeGen::new(1)));
     let token_set = {
         let set = load_token_set(&pool).await?;
         Arc::new(std::sync::RwLock::new(set))
     };
 
-    // HTTP（REST API + healthz）
-    let http_port = cli.http_port;
-    let http_pool = pool.clone();
-    let http_id_gen = id_gen.clone();
-    let http_token_set = token_set.clone();
-    tokio::spawn(async move {
-        let app_state = AppState {
-            db: http_pool,
-            id_gen: http_id_gen,
-            token_set: http_token_set,
-        };
-        let app = Router::new()
-            .route("/healthz", get(healthz))
-            .route("/api/nodes", get(list_nodes))
-            .route("/api/nodes/{id}/metrics", get(node_metrics))
-            .route("/api/tokens", get(list_tokens).post(create_token))
-            .route("/api/tokens/{id}", axum::routing::delete(delete_token))
-            .with_state(app_state)
-            .layer(CorsLayer::permissive());
-
-        let listener = tokio::net::TcpListener::bind(format!("0.0.0.0:{}", http_port))
-            .await
-            .expect("bind http");
-        info!("http on :{}", http_port);
-        axum::serve(listener, app).await.expect("http serve");
-    });
-
-    // gRPC，拦截器同时接受 global_token 和 token_set 中的任意 token
+    // gRPC 拦截器：同时接受 global_token 和 DB token
     let global_token = cli.token.clone();
     let token_set_for_grpc = token_set.clone();
-    let svc = MonitorService { db: pool, id_gen };
+    let svc = MonitorService {
+        db: pool.clone(),
+        id_gen: id_gen.clone(),
+    };
     let monitor = MonitorServer::with_interceptor(svc, move |req: Request<()>| {
         match req.metadata().get("authorization") {
             Some(v) => {
                 let bearer = v.to_str().unwrap_or("");
                 let tok = bearer.strip_prefix("Bearer ").unwrap_or(bearer);
-                let valid = tok == global_token || token_set_for_grpc.read().unwrap().contains(tok);
+                let valid =
+                    tok == global_token || token_set_for_grpc.read().unwrap().contains(tok);
                 if valid {
                     Ok(req)
                 } else {
@@ -556,11 +528,27 @@ async fn main() -> Result<()> {
         }
     });
 
-    info!("grpc on {}", grpc_addr);
-    tonic::transport::Server::builder()
-        .add_service(monitor)
-        .serve(grpc_addr)
-        .await?;
+    // gRPC 路由作为 axum fallback，REST 路由优先匹配
+    let grpc_router = GrpcRoutes::new(monitor).into_axum_router();
+
+    let app = Router::new()
+        .route("/healthz", get(healthz))
+        .route("/api/nodes", get(list_nodes))
+        .route("/api/nodes/{id}/metrics", get(node_metrics))
+        .route("/api/tokens", get(list_tokens).post(create_token))
+        .route("/api/tokens/{id}", axum::routing::delete(delete_token))
+        .with_state(AppState {
+            db: pool,
+            id_gen,
+            token_set,
+        })
+        .layer(CorsLayer::permissive())
+        .fallback_service(grpc_router);
+
+    let listener =
+        tokio::net::TcpListener::bind(format!("0.0.0.0:{}", cli.port)).await?;
+    info!("listening on :{} (gRPC + HTTP)", cli.port);
+    axum::serve(listener, app).await?;
 
     Ok(())
 }

@@ -12,9 +12,8 @@ db-init:
 
 ## 并行启动 server + web + agent（Ctrl-C 一起退出）
 dev:
-	@lsof -ti:50051 | xargs kill -9 2>/dev/null || true
 	@lsof -ti:8080  | xargs kill -9 2>/dev/null || true
-	@$(ENV) RUST_BACKTRACE=1 trap 'kill 0' INT; \
+	@$(ENV) SENTINODE_SERVER=http://localhost:8080; RUST_BACKTRACE=1 trap 'kill 0' INT; \
 	cargo run --bin sentinode-server & \
 	(sleep 3 && cargo run --bin sentinode-agent) & \
 	(cd web && bun run dev) & \

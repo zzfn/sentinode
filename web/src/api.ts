@@ -28,7 +28,8 @@ export interface AgentToken {
   created_at: string;
 }
 
-const BASE = (process.env.API_BASE ?? "") + "/api";
+const BASE =
+  (typeof process !== "undefined" ? (process.env?.API_BASE ?? "") : "") + "/api";
 
 async function checkResponse(res: Response): Promise<Response> {
   if (!res.ok) {

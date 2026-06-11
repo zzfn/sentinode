@@ -19,5 +19,5 @@ RUN cargo build --release --bin sentinode-server
 FROM debian:bookworm-slim
 RUN apt-get update && apt-get install -y ca-certificates libssl3 && rm -rf /var/lib/apt/lists/*
 COPY --from=builder /app/target/release/sentinode-server /usr/local/bin/
-EXPOSE 50051 8080
+EXPOSE 8080
 CMD ["sentinode-server"]
