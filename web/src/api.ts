@@ -164,6 +164,11 @@ export async function deleteToken(id: string): Promise<void> {
   if (!r.ok) throw new Error(`HTTP ${r.status}`);
 }
 
+export async function triggerUpgrade(id: string): Promise<void> {
+  const r = await fetch(`${BASE}/admin/nodes/${id}/upgrade`, { method: "POST" });
+  if (!r.ok) throw new Error(`HTTP ${r.status}`);
+}
+
 export async function toggleLatencyTest(id: string, enabled: boolean): Promise<void> {
   const r = await fetch(`${BASE}/admin/nodes/${id}`, {
     method: "PUT",

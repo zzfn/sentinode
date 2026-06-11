@@ -162,10 +162,25 @@ async fn main() -> Result<()> {
                 Ok(r) => {
                     let resp = r.into_inner();
                     info!(
-                        "reported ok={} latency_test_enabled={}",
-                        resp.ok, resp.latency_test_enabled
+                        "reported ok={} latency_test_enabled={} should_upgrade={}",
+                        resp.ok, resp.latency_test_enabled, resp.should_upgrade
                     );
                     latency_enabled = resp.latency_test_enabled;
+                    if resp.should_upgrade {
+                        let server = cli.server.clone();
+                        let token = cli.token.clone();
+                        tokio::spawn(async move {
+                            info!("upgrade requested, running install script...");
+                            let cmd = format!(
+                                "curl -fsSL https://raw.githubusercontent.com/zzfn/sentinode/main/scripts/install.sh | sh -s -- --server '{}' --token '{}'",
+                                server, token
+                            );
+                            let _ = tokio::process::Command::new("sh")
+                                .arg("-c")
+                                .arg(cmd)
+                                .spawn();
+                        });
+                    }
                     break 'retry;
                 }
                 Err(e) => {

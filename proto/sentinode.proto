@@ -50,6 +50,7 @@ message ReportRequest {
 message ReportResponse {
   bool ok                   = 1;
   bool latency_test_enabled = 2;
+  bool should_upgrade       = 3;
 }
 
 service Monitor {

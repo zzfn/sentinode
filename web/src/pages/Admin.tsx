@@ -3,7 +3,7 @@ import { Link } from "wouter";
 import {
   AdminNode, AdminStats, AgentToken, SERVER_URL,
   createToken, deleteToken, fetchAdminNodes, fetchAdminStats, fetchNodes, fetchTokens,
-  toCNY, toggleLatencyTest, updateNodeMeta,
+  toCNY, toggleLatencyTest, triggerUpgrade, updateNodeMeta,
 } from "../api";
 import { Alert, AlertDescription } from "../components/ui/alert";
 import { Button } from "../components/ui/button";
@@ -404,6 +404,7 @@ export default function Admin() {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editNode, setEditNode] = useState<AdminNode | null>(null);
   const [nodeCnyPrices, setNodeCnyPrices] = useState<Record<string, number | null>>({});
+  const [upgradingIds, setUpgradingIds] = useState<Set<string>>(new Set());
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -438,6 +439,18 @@ export default function Admin() {
     } else {
       setNodeCnyPrices((prev) => ({ ...prev, [id]: null }));
     }
+  }
+
+  async function handleUpgrade(id: string) {
+    setUpgradingIds((prev) => new Set(prev).add(id));
+    try {
+      await triggerUpgrade(id);
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : String(e));
+      setUpgradingIds((prev) => { const s = new Set(prev); s.delete(id); return s; });
+    }
+    // 30s 后清除升级中状态（足够时间让 agent 重启）
+    setTimeout(() => setUpgradingIds((prev) => { const s = new Set(prev); s.delete(id); return s; }), 30_000);
   }
 
   async function handleDelete(id: string) {
@@ -538,7 +551,7 @@ export default function Admin() {
                           <TableHead>到期时间</TableHead>
                           <TableHead>月费</TableHead>
                           <TableHead className="w-20">三网测速</TableHead>
-                          <TableHead className="w-16">操作</TableHead>
+                          <TableHead className="w-32">操作</TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
@@ -583,7 +596,17 @@ export default function Admin() {
                                 />
                               </TableCell>
                               <TableCell>
-                                <Button variant="outline" size="sm" onClick={() => setEditNode(n)}>编辑</Button>
+                                <div className="flex gap-1.5">
+                                  <Button variant="outline" size="sm" onClick={() => setEditNode(n)}>编辑</Button>
+                                  <Button
+                                    variant="outline"
+                                    size="sm"
+                                    disabled={upgradingIds.has(n.id)}
+                                    onClick={() => handleUpgrade(n.id)}
+                                  >
+                                    {upgradingIds.has(n.id) ? "升级中…" : "升级"}
+                                  </Button>
+                                </div>
                               </TableCell>
                             </TableRow>
                           );

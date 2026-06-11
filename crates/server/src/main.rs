@@ -100,6 +100,7 @@ struct MonitorService {
     db: PgPool,
     id_gen: Arc<Mutex<SnowflakeGen>>,
     event_tx: broadcast::Sender<String>,
+    upgrade_set: Arc<Mutex<HashSet<i64>>>,
 }
 
 impl MonitorService {
@@ -235,9 +236,12 @@ impl Monitor for MonitorService {
             "recorded metrics for {} (node_id={}) latency_test_enabled={}",
             node.hostname, node_id, enabled
         );
+        let should_upgrade = self.upgrade_set.lock().unwrap().remove(&node_id);
+
         Ok(Response::new(ReportResponse {
             ok: true,
             latency_test_enabled: enabled,
+            should_upgrade,
         }))
     }
 }
@@ -250,6 +254,7 @@ struct AppState {
     id_gen: Arc<Mutex<SnowflakeGen>>,
     token_set: Arc<std::sync::RwLock<HashSet<String>>>,
     event_tx: broadcast::Sender<String>,
+    upgrade_set: Arc<Mutex<HashSet<i64>>>,
 }
 
 #[derive(FromRow)]
@@ -688,6 +693,15 @@ async fn admin_stats(State(s): State<AppState>) -> Result<Json<AdminStats>, Stat
     }))
 }
 
+async fn trigger_upgrade(
+    State(s): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<StatusCode, StatusCode> {
+    let id: i64 = id.parse().map_err(|_| StatusCode::BAD_REQUEST)?;
+    s.upgrade_set.lock().unwrap().insert(id);
+    Ok(StatusCode::NO_CONTENT)
+}
+
 // ── Schema ───────────────────────────────────────────────────────────────────
 
 async fn init_schema(pool: &PgPool) -> Result<()> {
@@ -841,6 +855,7 @@ async fn main() -> Result<()> {
         Arc::new(std::sync::RwLock::new(set))
     };
     let (event_tx, _) = broadcast::channel::<String>(64);
+    let upgrade_set: Arc<Mutex<HashSet<i64>>> = Arc::new(Mutex::new(HashSet::new()));
 
     // gRPC 拦截器：同时接受 global_token 和 DB token
     let global_token = cli.token.clone();
@@ -849,6 +864,7 @@ async fn main() -> Result<()> {
         db: pool.clone(),
         id_gen: id_gen.clone(),
         event_tx: event_tx.clone(),
+        upgrade_set: upgrade_set.clone(),
     };
     let monitor = MonitorServer::with_interceptor(svc, move |req: Request<()>| {
         match req.metadata().get("authorization") {
@@ -879,12 +895,17 @@ async fn main() -> Result<()> {
         .route("/api/tokens/{id}", axum::routing::delete(delete_token))
         .route("/api/admin/nodes", get(admin_list_nodes))
         .route("/api/admin/nodes/{id}", put(update_node_meta))
+        .route(
+            "/api/admin/nodes/{id}/upgrade",
+            axum::routing::post(trigger_upgrade),
+        )
         .route("/api/admin/stats", get(admin_stats))
         .with_state(AppState {
             db: pool,
             id_gen,
             token_set,
             event_tx,
+            upgrade_set,
         })
         .layer(CorsLayer::permissive())
         .fallback_service(grpc_router);
