@@ -581,6 +581,8 @@ async fn sse_events(
     })
     .collect();
 
+    // 先发一个 comment 事件，强制 Cloudflare 等代理立即 flush 响应头和缓冲区
+    let init_stream = tokio_stream::iter(vec![Ok(Event::default().comment("init"))]);
     let snapshot_stream = tokio_stream::iter(
         snapshot
             .into_iter()
@@ -589,7 +591,7 @@ async fn sse_events(
     let live_stream = BroadcastStream::new(rx)
         .filter_map(|msg| msg.ok().map(|data| Ok(Event::default().data(data))));
 
-    Sse::new(snapshot_stream.chain(live_stream)).keep_alive(KeepAlive::default())
+    Sse::new(init_stream.chain(snapshot_stream).chain(live_stream)).keep_alive(KeepAlive::default())
 }
 
 async fn healthz() -> &'static str {
