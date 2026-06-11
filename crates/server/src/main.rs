@@ -16,8 +16,8 @@ use sqlx::{FromRow, PgPool, Row};
 use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
-use tonic::{async_trait, Request, Response, Status};
 use tonic::service::Routes as GrpcRoutes;
+use tonic::{async_trait, Request, Response, Status};
 use tower_http::cors::CorsLayer;
 use tracing::info;
 use uuid::Uuid;
@@ -516,8 +516,7 @@ async fn main() -> Result<()> {
             Some(v) => {
                 let bearer = v.to_str().unwrap_or("");
                 let tok = bearer.strip_prefix("Bearer ").unwrap_or(bearer);
-                let valid =
-                    tok == global_token || token_set_for_grpc.read().unwrap().contains(tok);
+                let valid = tok == global_token || token_set_for_grpc.read().unwrap().contains(tok);
                 if valid {
                     Ok(req)
                 } else {
@@ -545,8 +544,7 @@ async fn main() -> Result<()> {
         .layer(CorsLayer::permissive())
         .fallback_service(grpc_router);
 
-    let listener =
-        tokio::net::TcpListener::bind(format!("0.0.0.0:{}", cli.port)).await?;
+    let listener = tokio::net::TcpListener::bind(format!("0.0.0.0:{}", cli.port)).await?;
     info!("listening on :{} (gRPC + HTTP)", cli.port);
     axum::serve(listener, app).await?;
 
