@@ -1,8 +1,11 @@
 use anyhow::Result;
 use axum::{
     extract::{Path, Query, State},
-    http::StatusCode,
-    response::sse::{Event, KeepAlive, Sse},
+    http::{HeaderMap, HeaderValue, StatusCode},
+    response::{
+        sse::{Event, KeepAlive, Sse},
+        IntoResponse,
+    },
     routing::{get, put},
     Json, Router,
 };
@@ -557,9 +560,7 @@ async fn get_node(
     Ok(Json(row.into()))
 }
 
-async fn sse_events(
-    State(s): State<AppState>,
-) -> Sse<impl tokio_stream::Stream<Item = Result<Event, Infallible>>> {
+async fn sse_events(State(s): State<AppState>) -> impl IntoResponse {
     let rx = s.event_tx.subscribe();
 
     // 建立连接时先推送当前所有节点快照
@@ -585,7 +586,9 @@ async fn sse_events(
     tracing::info!("sse snapshot: {} nodes", snapshot.len());
 
     // 先发一个 comment 事件，强制 Cloudflare 等代理立即 flush 响应头和缓冲区
-    let init_stream = tokio_stream::iter(vec![Ok(Event::default().comment("init"))]);
+    let init_stream = tokio_stream::iter(vec![Ok::<Event, Infallible>(
+        Event::default().comment("init"),
+    )]);
     let snapshot_stream = tokio_stream::iter(
         snapshot
             .into_iter()
@@ -594,7 +597,14 @@ async fn sse_events(
     let live_stream = BroadcastStream::new(rx)
         .filter_map(|msg| msg.ok().map(|data| Ok(Event::default().data(data))));
 
-    Sse::new(init_stream.chain(snapshot_stream).chain(live_stream)).keep_alive(KeepAlive::default())
+    // X-Accel-Buffering: no 告知 Cloudflare / nginx 禁用响应缓冲，立即转发 SSE 数据
+    let mut headers = HeaderMap::new();
+    headers.insert("X-Accel-Buffering", HeaderValue::from_static("no"));
+
+    let sse = Sse::new(init_stream.chain(snapshot_stream).chain(live_stream))
+        .keep_alive(KeepAlive::default());
+
+    (headers, sse)
 }
 
 async fn healthz() -> &'static str {
