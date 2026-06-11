@@ -174,25 +174,25 @@ export default function NodeDetail() {
       .catch(() => {})
       .finally(() => { if (!cancelled) setChartLoading(false); });
     return () => { cancelled = true; };
-  }, [range]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [id, range]);
 
   // 仅 1h 模式下订阅 SSE 实时追加
   useEffect(() => {
     if (!id || range !== 1) return;
     const unsub = subscribeNodeDetail(id, (m) => {
       setMetrics((prev) => {
-        const next = [m, ...prev];
-        return next.length > 300 ? next.slice(0, 300) : next;
+        const next = [...prev, m];
+        return next.length > 300 ? next.slice(-300) : next;
       });
     });
     return unsub;
   }, [id, range]);
 
-  const latest = metrics[0];
+  const latest = metrics[metrics.length - 1];
 
   const chartData = useMemo(
     () =>
-      [...metrics].reverse().map((m) => ({
+      metrics.map((m) => ({
         time: fmtTime(m.reported_at, range),
         cpu: parseFloat(m.cpu_percent.toFixed(1)),
         memPct:
@@ -505,7 +505,7 @@ export default function NodeDetail() {
                       <ChartTooltip
                         content={
                           <ChartTooltipContent
-                            formatter={(v) => [`${v}%`]}
+                            formatter={(v) => [typeof v === "number" ? `${v}%` : String(v)]}
                           />
                         }
                       />
@@ -590,7 +590,7 @@ export default function NodeDetail() {
                       <ChartTooltip
                         content={
                           <ChartTooltipContent
-                            formatter={(v) => [`${v}%`]}
+                            formatter={(v) => [typeof v === "number" ? `${v}%` : String(v)]}
                           />
                         }
                       />
@@ -700,7 +700,7 @@ export default function NodeDetail() {
                         <ChartTooltip
                           content={
                             <ChartTooltipContent
-                              formatter={(v) => [`${v} ms`]}
+                              formatter={(v) => [typeof v === "number" ? `${v} ms` : String(v)]}
                             />
                           }
                         />
@@ -747,7 +747,7 @@ export default function NodeDetail() {
                         <CartesianGrid strokeDasharray="3 3" stroke="rgba(128,128,128,0.12)" />
                         <XAxis dataKey="time" tick={{ fontSize: 10 }} interval="preserveStartEnd" />
                         <YAxis tick={{ fontSize: 10 }} width={46} unit=" MB/s" />
-                        <ChartTooltip content={<ChartTooltipContent formatter={(v) => [`${v} MB/s`]} />} />
+                        <ChartTooltip content={<ChartTooltipContent formatter={(v) => [typeof v === "number" ? `${v} MB/s` : String(v)]} />} />
                         <Line type="monotone" dataKey="rxMbps" stroke="var(--color-rxMbps)" dot={false} strokeWidth={2} connectNulls={false} />
                         <Line type="monotone" dataKey="txMbps" stroke="var(--color-txMbps)" dot={false} strokeWidth={2} connectNulls={false} />
                       </LineChart>

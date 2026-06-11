@@ -1,20 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "wouter";
 import { countryFlagUrl, fmtBandwidth, sendBeacon, subscribeNodes, type BeaconInfo, type Node } from "../api";
+import { relativeTime } from "../utils";
 
 function isOnline(lastSeen: string): boolean {
   return Date.now() - new Date(lastSeen).getTime() < 2 * 60 * 1000;
-}
-
-function relativeTime(iso: string): string {
-  const diff = Date.now() - new Date(iso).getTime();
-  const s = Math.floor(diff / 1000);
-  if (s < 60) return "刚刚";
-  const m = Math.floor(s / 60);
-  if (m < 60) return `${m} 分钟前`;
-  const h = Math.floor(m / 60);
-  if (h < 24) return `${h} 小时前`;
-  return `${Math.floor(h / 24)} 天前`;
 }
 
 function LatencyPill({

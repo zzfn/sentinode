@@ -6,6 +6,7 @@ import {
   fetchAdminNodes, fetchAdminStats, fetchTokens, fetchVisitors,
   toCNY, toggleLatencyTest, triggerUpgrade, updateNodeMeta,
 } from "../api";
+import { relativeTime } from "../utils";
 import { Alert, AlertDescription } from "../components/ui/alert";
 import { Input } from "../components/ui/input";
 import { Label } from "../components/ui/label";
@@ -25,8 +26,8 @@ const INSTALL_SCRIPT_URL =
 
 function buildScript(serverUrl: string, token: string): string {
   return `curl -fsSL ${INSTALL_SCRIPT_URL} | sh -s -- \\
-  --server ${serverUrl} \\
-  --token ${token}`;
+  --server '${serverUrl}' \\
+  --token '${token}'`;
 }
 
 const CURRENCIES = ["CNY", "USD", "EUR", "HKD"];
@@ -302,7 +303,7 @@ function AddAgentDialog({
       pollRef.current = setInterval(async () => {
         try {
           const nodes = await fetchAdminNodes();
-          const connectedNode = nodes.find((n) => new Date(n.last_seen).getTime() > startedAt);
+          const connectedNode = nodes.find((n) => n.token === tok.token && n.hostname && n.connected);
           if (connectedNode) {
             clearInterval(pollRef.current!); pollRef.current = null;
             setConnectedHostname(connectedNode.hostname); setStep("success");
@@ -454,16 +455,6 @@ function VisitorsView() {
     return () => clearInterval(t);
   }, []);
 
-  function fmtTime(iso: string) {
-    const d = new Date(iso);
-    const now = Date.now();
-    const diff = now - d.getTime();
-    if (diff < 60_000) return "刚刚";
-    if (diff < 3_600_000) return `${Math.floor(diff / 60_000)} 分钟前`;
-    if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)} 小时前`;
-    return d.toLocaleDateString("zh-CN");
-  }
-
   if (loading) {
     return (
       <div className="space-y-4">
@@ -567,13 +558,13 @@ function VisitorsView() {
                     <div className="text-[10px] text-[var(--color-muted-foreground)] mt-0.5 flex gap-2 flex-wrap">
                       {v.asn && <span className="font-mono">{v.asn}</span>}
                       <span>{v.page}</span>
-                      <span>首次 {fmtTime(v.first_seen)}</span>
+                      <span>首次 {relativeTime(v.first_seen)}</span>
                     </div>
                   </div>
 
                   {/* 最后活跃 */}
                   <span className="text-xs text-[var(--color-muted-foreground)] flex-shrink-0 tabular-nums">
-                    {fmtTime(v.last_seen)}
+                    {relativeTime(v.last_seen)}
                   </span>
                 </div>
               );
@@ -671,7 +662,7 @@ function DbStatsView() {
                   tick={{ fontSize: 11 }} width={50}
                   tickFormatter={(v) => v >= 1000 ? `${(v / 1000).toFixed(0)}k` : String(v)}
                 />
-                <ChartTooltip content={<ChartTooltipContent formatter={(v: number) => [v.toLocaleString()]} />} />
+                <ChartTooltip content={<ChartTooltipContent formatter={(v) => [typeof v === "number" ? v.toLocaleString() : String(v)]} />} />
                 <Bar dataKey="count" fill="url(#barGrad)" radius={[4, 4, 0, 0]} />
               </BarChart>
             </ChartContainer>

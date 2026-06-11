@@ -102,6 +102,7 @@ struct MonitorService {
     id_gen: Arc<Mutex<SnowflakeGen>>,
     event_tx: broadcast::Sender<String>,
     upgrade_set: Arc<Mutex<HashSet<i64>>>,
+    http_client: reqwest::Client,
 }
 
 impl MonitorService {
@@ -281,14 +282,12 @@ impl Monitor for MonitorService {
             let ip = node.ip.clone();
             let db2 = self.db.clone();
             let nid = node_id;
+            let http = self.http_client.clone();
             tokio::spawn(async move {
                 if is_private_ip(&ip) {
                     return;
                 }
-                if let Ok(resp) = reqwest::Client::builder()
-                    .timeout(Duration::from_secs(5))
-                    .build()
-                    .unwrap()
+                if let Ok(resp) = http
                     .get(format!(
                         "http://ip-api.com/json/{}?fields=status,countryCode,country,city&lang=zh-CN",
                         ip
@@ -373,6 +372,7 @@ struct AppState {
     token_set: Arc<std::sync::RwLock<HashSet<String>>>,
     event_tx: broadcast::Sender<String>,
     upgrade_set: Arc<Mutex<HashSet<i64>>>,
+    http_client: reqwest::Client,
 }
 
 #[derive(FromRow)]
@@ -733,11 +733,9 @@ async fn record_beacon(
         let pool = s.db.clone();
         let ip_clone = ip.clone();
         let vid = row.id;
+        let http = s.http_client.clone();
         tokio::spawn(async move {
-            if let Ok(resp) = reqwest::Client::builder()
-                .timeout(Duration::from_secs(5))
-                .build()
-                .unwrap()
+            if let Ok(resp) = http
                 .get(format!(
                     "http://ip-api.com/json/{}?fields=status,countryCode,country,regionName,city,isp,org,as&lang=zh-CN",
                     ip_clone
@@ -1042,14 +1040,21 @@ async fn delete_node(
     Path(id): Path<String>,
 ) -> Result<StatusCode, StatusCode> {
     let id: i64 = id.parse().map_err(|_| StatusCode::BAD_REQUEST)?;
+    let mut tx =
+        s.db.begin()
+            .await
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     sqlx::query("DELETE FROM metrics WHERE node_id = $1")
         .bind(id)
-        .execute(&s.db)
+        .execute(&mut *tx)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     sqlx::query("DELETE FROM nodes WHERE id = $1")
         .bind(id)
-        .execute(&s.db)
+        .execute(&mut *tx)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    tx.commit()
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(StatusCode::NO_CONTENT)
@@ -1263,7 +1268,11 @@ async fn public_status(
                 .count() as f64
                 / 30.0
                 * 100.0;
-            let up90 = data.len().min(90) as f64 / 90.0 * 100.0;
+            let up90 = (0i64..90)
+                .filter(|&i| data.contains(&(today - chrono::Duration::days(i))))
+                .count() as f64
+                / 90.0
+                * 100.0;
             let online = (chrono::Utc::now() - n.last_seen).num_seconds() < 120;
             StatusNodeSummary {
                 id: n.id.to_string(),
@@ -1454,7 +1463,7 @@ async fn init_schema(pool: &PgPool) -> Result<()> {
              SET token=t.token, name=t.name, token_created_at=t.created_at
            FROM tokens t
            WHERE n.token_id=t.id AND n.token IS NULL;
-           INSERT INTO nodes (id, token, token_name, token_created_at, last_seen)
+           INSERT INTO nodes (id, token, name, token_created_at, last_seen)
            SELECT t.id, t.token, t.name, t.created_at, t.created_at
            FROM tokens t
            WHERE NOT EXISTS (SELECT 1 FROM nodes n WHERE n.token_id=t.id)
@@ -1587,6 +1596,10 @@ async fn main() -> Result<()> {
     };
     let (event_tx, _) = broadcast::channel::<String>(64);
     let upgrade_set: Arc<Mutex<HashSet<i64>>> = Arc::new(Mutex::new(HashSet::new()));
+    let http_client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(5))
+        .build()
+        .expect("failed to build HTTP client");
 
     // gRPC 拦截器：同时接受 global_token 和 DB token
     let global_token = cli.token.clone();
@@ -1596,6 +1609,7 @@ async fn main() -> Result<()> {
         id_gen: id_gen.clone(),
         event_tx: event_tx.clone(),
         upgrade_set: upgrade_set.clone(),
+        http_client: http_client.clone(),
     };
     let monitor = MonitorServer::with_interceptor(svc, move |req: Request<()>| {
         match req.metadata().get("authorization") {
@@ -1645,6 +1659,7 @@ async fn main() -> Result<()> {
             token_set,
             event_tx,
             upgrade_set,
+            http_client,
         })
         .layer(CorsLayer::permissive())
         .fallback_service(grpc_router);

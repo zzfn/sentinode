@@ -113,16 +113,49 @@ export async function fetchNode(id: string): Promise<Node> {
   return r.json();
 }
 
+// ── 单例 SSE 连接管理器 ───────────────────────────────────────────────────────
+
+type SseHandler = (msg: Record<string, unknown>) => void;
+
+let _es: EventSource | null = null;
+let _refCount = 0;
+const _handlers = new Set<SseHandler>();
+
+function _acquireEs() {
+  if (!_es) {
+    _es = new EventSource(`${BASE}/events`);
+    _es.onmessage = (e) => {
+      try {
+        const msg = JSON.parse(e.data) as Record<string, unknown>;
+        _handlers.forEach((h) => h(msg));
+      } catch {}
+    };
+    _es.onerror = () => {
+      // 断线后浏览器会自动重连，无需手动处理
+    };
+  }
+  _refCount++;
+  return _es;
+}
+
+function _releaseEs(handler: SseHandler) {
+  _handlers.delete(handler);
+  _refCount--;
+  if (_refCount <= 0 && _es) {
+    _es.close();
+    _es = null;
+    _refCount = 0;
+  }
+}
+
 /** 订阅 SSE 节点更新，返回 unsubscribe 函数 */
 export function subscribeNodes(onUpdate: (node: Node) => void): () => void {
-  const es = new EventSource(`${BASE}/events`);
-  es.onmessage = (e) => {
-    try {
-      const msg = JSON.parse(e.data);
-      if (msg.type === "node_updated") onUpdate(msg.data as Node);
-    } catch {}
+  const handler: SseHandler = (msg) => {
+    if (msg.type === "node_updated") onUpdate(msg.data as Node);
   };
-  return () => es.close();
+  _acquireEs();
+  _handlers.add(handler);
+  return () => _releaseEs(handler);
 }
 
 /** 订阅特定节点的实时 metric_added 事件，返回 unsubscribe 函数 */
@@ -130,20 +163,18 @@ export function subscribeNodeDetail(
   nodeId: string,
   onMetric: (m: Metric) => void,
 ): () => void {
-  const es = new EventSource(`${BASE}/events`);
-  es.onmessage = (e) => {
-    try {
-      const msg = JSON.parse(e.data);
-      if (msg.type === "metric_added" && msg.node_id === nodeId) {
-        onMetric({
-          id: `sse-${Date.now()}`,
-          reported_at: new Date().toISOString(),
-          ...(msg.data as Omit<Metric, "id" | "reported_at">),
-        });
-      }
-    } catch {}
+  const handler: SseHandler = (msg) => {
+    if (msg.type === "metric_added" && msg.node_id === nodeId) {
+      onMetric({
+        id: `sse-${Date.now()}`,
+        reported_at: new Date().toISOString(),
+        ...(msg.data as Omit<Metric, "id" | "reported_at">),
+      });
+    }
   };
-  return () => es.close();
+  _acquireEs();
+  _handlers.add(handler);
+  return () => _releaseEs(handler);
 }
 
 export async function fetchAdminNodes(): Promise<AdminNode[]> {
