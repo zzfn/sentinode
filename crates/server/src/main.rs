@@ -891,8 +891,11 @@ async fn main() -> Result<()> {
         .route("/api/nodes", get(list_nodes))
         .route("/api/nodes/{id}", get(get_node))
         .route("/api/nodes/{id}/metrics", get(node_metrics))
-        .route("/api/tokens", get(list_tokens).post(create_token))
-        .route("/api/tokens/{id}", axum::routing::delete(delete_token))
+        .route("/api/admin/tokens", get(list_tokens).post(create_token))
+        .route(
+            "/api/admin/tokens/{id}",
+            axum::routing::delete(delete_token),
+        )
         .route("/api/admin/nodes", get(admin_list_nodes))
         .route("/api/admin/nodes/{id}", put(update_node_meta))
         .route(

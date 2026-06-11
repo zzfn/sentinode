@@ -144,13 +144,13 @@ export async function fetchMetrics(id: string, limit = 60): Promise<Metric[]> {
 }
 
 export async function fetchTokens(): Promise<AgentToken[]> {
-  const r = await fetch(`${BASE}/tokens`);
+  const r = await fetch(`${BASE}/admin/tokens`);
   if (!r.ok) throw new Error(`HTTP ${r.status}`);
   return r.json();
 }
 
 export async function createToken(name: string): Promise<AgentToken> {
-  const r = await fetch(`${BASE}/tokens`, {
+  const r = await fetch(`${BASE}/admin/tokens`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ name }),
@@ -160,7 +160,7 @@ export async function createToken(name: string): Promise<AgentToken> {
 }
 
 export async function deleteToken(id: string): Promise<void> {
-  const r = await fetch(`${BASE}/tokens/${id}`, { method: "DELETE" });
+  const r = await fetch(`${BASE}/admin/tokens/${id}`, { method: "DELETE" });
   if (!r.ok) throw new Error(`HTTP ${r.status}`);
 }
 
