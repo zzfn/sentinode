@@ -49,6 +49,7 @@ VERSION=$(curl -fsSL "https://api.github.com/repos/${REPO}/releases/latest" \
 echo "→ 版本: $VERSION  架构: $ARCH"
 
 # ── 下载二进制 ────────────────────────────────────────────────────────────────
+systemctl stop sentinode-agent 2>/dev/null || true
 echo "→ 下载 ${FILE}..."
 curl -fsSL \
   "https://github.com/${REPO}/releases/download/${VERSION}/${FILE}" \
