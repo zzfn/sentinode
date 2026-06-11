@@ -32,6 +32,7 @@ export interface AdminNode extends Node {
   latency_test_enabled: boolean;
   name: string | null;
   token: string | null;
+  agent_version: string | null;
 }
 
 // ── 汇率换算 ──────────────────────────────────────────────────────────────────

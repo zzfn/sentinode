@@ -137,7 +137,8 @@ impl Monitor for MonitorService {
         let claimed_id: Option<i64> = if let Some(ref tok) = token_val {
             sqlx::query_scalar(
                 "UPDATE nodes SET hostname=$1, ip=$2, os=$3, arch=$4, last_seen=NOW(),
-                 cpu_model=COALESCE(NULLIF($5,''), cpu_model)
+                 cpu_model=COALESCE(NULLIF($5,''), cpu_model),
+                 agent_version=NULLIF($7,'')
                  WHERE token=$6 AND hostname IS NULL
                  RETURNING id",
             )
@@ -151,6 +152,7 @@ impl Monitor for MonitorService {
                 Some(node.cpu_model.as_str())
             })
             .bind(tok)
+            .bind(&node.agent_version)
             .fetch_optional(&self.db)
             .await
             .map_err(|e| Status::internal(e.to_string()))?
@@ -163,13 +165,14 @@ impl Monitor for MonitorService {
         } else {
             // 已连接节点续报 / 全局 token 节点：按 hostname UPSERT
             sqlx::query(
-                "INSERT INTO nodes (id, hostname, ip, os, arch, last_seen, token, cpu_model)
-                 VALUES ($1, $2, $3, $4, $5, NOW(), $6, $7)
+                "INSERT INTO nodes (id, hostname, ip, os, arch, last_seen, token, cpu_model, agent_version)
+                 VALUES ($1, $2, $3, $4, $5, NOW(), $6, $7, $8)
                  ON CONFLICT (hostname) DO UPDATE
                  SET ip = EXCLUDED.ip, os = EXCLUDED.os, arch = EXCLUDED.arch,
                      last_seen = NOW(),
                      token = COALESCE(nodes.token, EXCLUDED.token),
-                     cpu_model = COALESCE(NULLIF(EXCLUDED.cpu_model, ''), nodes.cpu_model)
+                     cpu_model = COALESCE(NULLIF(EXCLUDED.cpu_model, ''), nodes.cpu_model),
+                     agent_version = NULLIF(EXCLUDED.agent_version, '')
                  RETURNING id",
             )
             .bind(self.next_id())
@@ -182,6 +185,11 @@ impl Monitor for MonitorService {
                 None
             } else {
                 Some(&node.cpu_model)
+            })
+            .bind(if node.agent_version.is_empty() {
+                None
+            } else {
+                Some(&node.agent_version)
             })
             .fetch_one(&self.db)
             .await
@@ -268,7 +276,7 @@ impl Monitor for MonitorService {
 
         // 查询完整节点信息（用于广播和返回开关状态）
         let row = sqlx::query_as::<_, NodeRow>(
-            "SELECT id, hostname, ip, os, arch, last_seen, expires_at, price, price_currency, website_url, latency_test_enabled, latency_cu_ms, latency_cm_ms, latency_ct_ms, latency_updated_at, name, token AS token_value, cpu_model, net_rx_rate, net_tx_rate, country_code, location FROM nodes WHERE id = $1",
+            "SELECT id, hostname, ip, os, arch, last_seen, expires_at, price, price_currency, website_url, latency_test_enabled, latency_cu_ms, latency_cm_ms, latency_ct_ms, latency_updated_at, name, token AS token_value, cpu_model, net_rx_rate, net_tx_rate, country_code, location, agent_version FROM nodes WHERE id = $1",
         )
         .bind(node_id)
         .fetch_one(&self.db)
@@ -399,6 +407,7 @@ struct NodeRow {
     net_tx_rate: Option<i64>,
     country_code: Option<String>,
     location: Option<String>,
+    agent_version: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -651,7 +660,7 @@ async fn get_node(
 ) -> Result<Json<NodeResponse>, StatusCode> {
     let id: i64 = id.parse().map_err(|_| StatusCode::BAD_REQUEST)?;
     let row = sqlx::query_as::<_, NodeRow>(
-        "SELECT id, hostname, ip, os, arch, last_seen, expires_at, price, price_currency, website_url, latency_test_enabled, latency_cu_ms, latency_cm_ms, latency_ct_ms, latency_updated_at, name, token AS token_value, cpu_model, net_rx_rate, net_tx_rate, country_code, location FROM nodes WHERE id = $1",
+        "SELECT id, hostname, ip, os, arch, last_seen, expires_at, price, price_currency, website_url, latency_test_enabled, latency_cu_ms, latency_cm_ms, latency_ct_ms, latency_updated_at, name, token AS token_value, cpu_model, net_rx_rate, net_tx_rate, country_code, location, agent_version FROM nodes WHERE id = $1",
     )
     .bind(id)
     .fetch_optional(&s.db)
@@ -672,7 +681,8 @@ async fn sse_events(
                 n.price, n.price_currency, n.website_url, n.latency_test_enabled,
                 n.latency_cu_ms, n.latency_cm_ms, n.latency_ct_ms, n.latency_updated_at,
                 n.name, n.token AS token_value,
-                n.cpu_model, n.net_rx_rate, n.net_tx_rate, n.country_code, n.location
+                n.cpu_model, n.net_rx_rate, n.net_tx_rate, n.country_code, n.location,
+                n.agent_version
          FROM nodes n WHERE n.hostname IS NOT NULL ORDER BY n.last_seen DESC",
     )
     .fetch_all(&s.db)
@@ -985,6 +995,7 @@ struct AdminNodeResponse {
     net_tx_rate: Option<i64>,
     country_code: Option<String>,
     location: Option<String>,
+    agent_version: Option<String>,
 }
 
 impl From<NodeRow> for AdminNodeResponse {
@@ -1013,6 +1024,7 @@ impl From<NodeRow> for AdminNodeResponse {
             net_tx_rate: r.net_tx_rate,
             country_code: r.country_code.clone(),
             location: r.location.clone(),
+            agent_version: r.agent_version,
         }
     }
 }
@@ -1025,7 +1037,8 @@ async fn admin_list_nodes(
                 n.price, n.price_currency, n.website_url, n.latency_test_enabled,
                 n.latency_cu_ms, n.latency_cm_ms, n.latency_ct_ms, n.latency_updated_at,
                 n.name, n.token AS token_value,
-                n.cpu_model, n.net_rx_rate, n.net_tx_rate, n.country_code, n.location
+                n.cpu_model, n.net_rx_rate, n.net_tx_rate, n.country_code, n.location,
+                n.agent_version
          FROM nodes n
          ORDER BY n.hostname IS NULL, n.last_seen DESC",
     )
@@ -1521,6 +1534,10 @@ async fn init_schema(pool: &PgPool) -> Result<()> {
         .await
         .ok();
     sqlx::query("CREATE INDEX IF NOT EXISTS idx_visitors_last_seen ON visitors(last_seen DESC)")
+        .execute(pool)
+        .await
+        .ok();
+    sqlx::query("ALTER TABLE nodes ADD COLUMN IF NOT EXISTS agent_version TEXT")
         .execute(pool)
         .await
         .ok();

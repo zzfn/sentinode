@@ -191,6 +191,7 @@ async fn main() -> Result<()> {
                 arch: arch.clone(),
                 uptime_secs: System::uptime(),
                 cpu_model: cpu_model.clone(),
+                agent_version: env!("CARGO_PKG_VERSION").to_owned(),
             }),
             metrics: Some(Metrics {
                 cpu_percent: sys.global_cpu_usage(),

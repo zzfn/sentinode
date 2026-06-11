@@ -933,6 +933,11 @@ export default function Admin() {
                               <code className="text-[10px] font-mono bg-[var(--color-cream)] border border-[var(--color-border)] px-1.5 py-0.5 rounded-lg">
                                 {n.ip}
                               </code>
+                              {n.agent_version && (
+                                <span className="text-[10px] font-mono px-1.5 py-0.5 rounded-lg bg-[var(--color-violet)]/10 border border-[var(--color-violet)]/30 text-[var(--color-violet)]">
+                                  v{n.agent_version}
+                                </span>
+                              )}
                             </div>
                             <div className="flex flex-wrap gap-x-4 gap-y-0.5 text-xs text-[var(--color-muted-foreground)]">
                               {n.os && <span>{n.os}</span>}

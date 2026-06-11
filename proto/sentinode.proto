@@ -3,12 +3,13 @@ syntax = "proto3";
 package sentinode.v1;
 
 message NodeInfo {
-  string hostname    = 1;
-  string ip          = 2;
-  string os          = 3;
-  string arch        = 4;
-  uint64 uptime_secs = 5;
-  string cpu_model   = 6;
+  string hostname      = 1;
+  string ip            = 2;
+  string os            = 3;
+  string arch          = 4;
+  uint64 uptime_secs   = 5;
+  string cpu_model     = 6;
+  string agent_version = 7;
 }
 
 message DiskStat {
