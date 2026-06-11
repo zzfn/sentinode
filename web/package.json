@@ -3,7 +3,7 @@
   "private": true,
   "scripts": {
     "dev": "bun server.ts",
-    "build": "bun build src/index.tsx --outdir dist --target browser --minify && cp index.html dist/"
+    "build": "bun build src/index.tsx --outdir dist --target browser --minify --define \"process.env.API_BASE='${API_BASE:-}'\" && cp index.html dist/"
   },
   "dependencies": {
     "react": "^19",
