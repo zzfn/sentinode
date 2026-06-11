@@ -69,7 +69,7 @@ export default function Dashboard() {
               服务器监控
             </span>
           </div>
-          <Link href="/admin">
+          <Link href="/app">
             <Button variant="outline" size="sm">
               管理后台
             </Button>

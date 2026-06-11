@@ -8,7 +8,7 @@ export default function App() {
     <Switch>
       <Route path="/" component={Dashboard} />
       <Route path="/nodes/:id" component={NodeDetail} />
-      <Route path="/admin" component={Admin} />
+      <Route path="/app" component={Admin} />
     </Switch>
   );
 }
