@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
-import { Link, useLocation } from "wouter";
-import { countryFlag, fmtBandwidth, subscribeNodes, type Node } from "../api";
+import { Link } from "wouter";
+import { countryFlagUrl, fmtBandwidth, subscribeNodes, type Node } from "../api";
 
 function isOnline(lastSeen: string): boolean {
   return Date.now() - new Date(lastSeen).getTime() < 2 * 60 * 1000;
@@ -122,13 +122,13 @@ function NodeCard({ node }: { node: Node }) {
         )}
       </div>
 
-      {/* 主机名 */}
+      {/* 主机名 / Agent 名称 */}
       <div>
         {/* 国旗 + 地区 */}
         {(node.country_code || node.location) && (
           <div className="flex items-center gap-1.5 mb-1">
             {node.country_code && (
-              <span className="text-base leading-none">{countryFlag(node.country_code)}</span>
+              <img src={countryFlagUrl(node.country_code)!} alt={node.country_code} className="w-5 h-auto rounded-sm" />
             )}
             {node.location && (
               <span className="text-xs text-[var(--color-muted-foreground)]">{node.location}</span>
@@ -139,8 +139,13 @@ function NodeCard({ node }: { node: Node }) {
           className="text-lg font-bold leading-tight text-[var(--color-ink)] break-all"
           style={{ fontFamily: "var(--font-display)" }}
         >
-          {node.hostname}
+          {node.name || node.hostname}
         </h2>
+        {node.name && (
+          <p className="text-xs font-mono text-[var(--color-muted-foreground)] opacity-60 mt-0.5">
+            {node.hostname}
+          </p>
+        )}
         <p className="text-sm text-[var(--color-muted-foreground)] mt-0.5 leading-snug">
           {node.os}
           <span className="mx-1.5 opacity-40">·</span>
@@ -194,7 +199,6 @@ function NodeCard({ node }: { node: Node }) {
 export default function Dashboard() {
   const [nodes, setNodes] = useState<Node[]>([]);
   const [connected, setConnected] = useState(false);
-  const [, navigate] = useLocation();
 
   useEffect(() => {
     let cancelled = false;
@@ -295,18 +299,6 @@ export default function Dashboard() {
             </div>
           </div>
 
-          {/* 管理后台按钮 */}
-          <button
-            onClick={() => navigate("/app")}
-            className="relative flex items-center gap-1.5 px-4 py-2 rounded-full font-semibold text-sm
-              border-2 border-[var(--color-ink)] bg-white text-[var(--color-ink)]
-              shadow-[3px_3px_0_0_#1E293B]
-              hover:bg-[var(--color-amber)] hover:shadow-[5px_5px_0_0_#1E293B] hover:-translate-x-0.5 hover:-translate-y-0.5
-              active:shadow-[1px_1px_0_0_#1E293B] active:translate-x-0.5 active:translate-y-0.5
-              transition-all duration-150 cursor-pointer"
-          >
-            管理后台
-          </button>
         </div>
       </header>
 
@@ -349,20 +341,8 @@ export default function Dashboard() {
               暂无节点
             </p>
             <p className="text-sm text-[var(--color-muted-foreground)]">
-              前往管理后台创建 Token，然后运行 Agent
+              暂无节点接入
             </p>
-            <button
-              onClick={() => navigate("/app")}
-              className="px-5 py-2.5 rounded-full font-semibold text-sm text-white
-                border-2 border-[var(--color-ink)]
-                shadow-[3px_3px_0_0_#1E293B]
-                hover:shadow-[5px_5px_0_0_#1E293B] hover:-translate-x-0.5 hover:-translate-y-0.5
-                active:shadow-[1px_1px_0_0_#1E293B] active:translate-x-0.5 active:translate-y-0.5
-                transition-all duration-150 cursor-pointer"
-              style={{ background: "var(--color-violet)" }}
-            >
-              去管理后台
-            </button>
           </div>
         ) : (
           /* 节点卡片网格 */

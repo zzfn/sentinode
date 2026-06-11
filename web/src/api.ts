@@ -6,6 +6,7 @@ const BASE = SERVER_URL + "/api";
 
 export interface Node {
   id: string;
+  name: string | null;
   hostname: string;
   os: string;
   arch: string;
@@ -23,13 +24,12 @@ export interface Node {
 }
 
 export interface AdminNode extends Node {
-  // country_code 和 location 继承自 Node
+  connected: boolean;
   ip: string;
   price: number | null;
   price_currency: string | null;
   latency_test_enabled: boolean;
-  token_id: string | null;
-  token_name: string | null;
+  name: string | null;
   token: string | null;
 }
 
@@ -151,8 +151,8 @@ export async function fetchAdminNodes(): Promise<AdminNode[]> {
   return r.json();
 }
 
-export async function fetchMetrics(id: string, limit = 60): Promise<Metric[]> {
-  const r = await fetch(`${BASE}/nodes/${id}/metrics?limit=${limit}`);
+export async function fetchMetrics(id: string, hours = 1): Promise<Metric[]> {
+  const r = await fetch(`${BASE}/nodes/${id}/metrics?hours=${hours}`);
   if (!r.ok) throw new Error(`HTTP ${r.status}`);
   return r.json();
 }
@@ -227,12 +227,9 @@ export function fmtBandwidth(bytesPerSec: number | null | undefined): string {
   return `${kb.toFixed(0)} KB/s`;
 }
 
-export function countryFlag(code: string | null | undefined): string {
-  if (!code || code.length !== 2) return "";
-  const offset = 0x1f1e6 - 65;
-  return Array.from(code.toUpperCase())
-    .map((c) => String.fromCodePoint(c.charCodeAt(0) + offset))
-    .join("");
+export function countryFlagUrl(code: string | null | undefined): string | null {
+  if (!code || code.length !== 2) return null;
+  return `https://flagcdn.com/20x15/${code.toLowerCase()}.png`;
 }
 
 export interface StatusNode {

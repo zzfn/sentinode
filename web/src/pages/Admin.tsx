@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Link } from "wouter";
 import {
   AdminNode, AdminStats, AgentToken, SERVER_URL,
-  countryFlag, createToken, deleteNode, deleteToken,
+  countryFlagUrl, createToken, deleteNode, deleteToken,
   fetchAdminNodes, fetchAdminStats, fetchTokens,
   toCNY, toggleLatencyTest, triggerUpgrade, updateNodeMeta,
 } from "../api";
@@ -231,7 +231,7 @@ function ReinstallDialog({
           <p className="text-sm text-[var(--color-muted-foreground)]">该节点未绑定 Token，请通过"添加 Agent"重新安装。</p>
         ) : (
           <div className="space-y-2">
-            <p className="text-xs text-[var(--color-muted-foreground)]">Token：<span className="font-semibold text-[var(--color-ink)]">{node.token_name}</span></p>
+            <p className="text-xs text-[var(--color-muted-foreground)]">Agent：<span className="font-semibold text-[var(--color-ink)]">{node.name || node.hostname}</span></p>
             <Label className="text-xs font-semibold text-[var(--color-muted-foreground)] uppercase tracking-wider">在目标节点执行</Label>
             <div className="relative">
               <pre className="bg-[#1a1a2e] text-[#e2e8f0] rounded-xl border-2 border-[var(--color-ink)] p-4 pr-20 overflow-x-auto text-xs leading-relaxed whitespace-pre font-mono">
@@ -775,11 +775,14 @@ export default function Admin() {
                                 <span className="h-2 w-2 rounded-full bg-red-400 flex-shrink-0" />
                               )}
                               {n.country_code && (
-                                <span className="text-base leading-none">{countryFlag(n.country_code)}</span>
+                                <img src={countryFlagUrl(n.country_code)!} alt={n.country_code} className="w-5 h-auto rounded-sm" />
                               )}
                               <span className="font-bold text-[var(--color-ink)]" style={{ fontFamily: "var(--font-display)" }}>
-                                {n.hostname}
+                                {n.name || n.hostname}
                               </span>
+                              {n.name && (
+                                <span className="text-[10px] font-mono text-[var(--color-muted-foreground)] opacity-60">{n.hostname}</span>
+                              )}
                               {n.location && (
                                 <span className="text-xs text-[var(--color-muted-foreground)]">{n.location}</span>
                               )}

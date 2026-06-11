@@ -16,7 +16,7 @@ import {
   type ChartConfig,
 } from "../components/ui/chart";
 import {
-  countryFlag,
+  countryFlagUrl,
   fetchMetrics,
   fetchNode,
   fmtBandwidth,
@@ -27,7 +27,13 @@ import {
   type Node,
 } from "../api";
 
-const MAX_POINTS = 60;
+const RANGES = [
+  { label: "1h", hours: 1 },
+  { label: "6h", hours: 6 },
+  { label: "24h", hours: 24 },
+  { label: "7d", hours: 168 },
+] as const;
+type RangeHours = 1 | 6 | 24 | 168;
 
 // 循环使用的强调色
 const ACCENTS = [
@@ -119,12 +125,15 @@ function fmtLatency(ms: number | null | undefined): string {
   return `${ms.toFixed(0)} ms`;
 }
 
-function fmtTime(iso: string): string {
-  return new Date(iso).toLocaleTimeString("zh-CN", {
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-  });
+function fmtTime(iso: string, hours: number): string {
+  const d = new Date(iso);
+  if (hours <= 1) {
+    return d.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  }
+  if (hours <= 24) {
+    return d.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" });
+  }
+  return `${(d.getMonth() + 1).toString().padStart(2, "0")}-${d.getDate().toString().padStart(2, "0")} ${d.getHours().toString().padStart(2, "0")}:${d.getMinutes().toString().padStart(2, "0")}`;
 }
 
 function isOnline(lastSeen: string): boolean {
@@ -137,42 +146,54 @@ export default function NodeDetail() {
   const [metrics, setMetrics] = useState<Metric[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [range, setRange] = useState<RangeHours>(1);
+  const [chartLoading, setChartLoading] = useState(false);
 
+  // 初始加载节点信息 + 1h 数据
   useEffect(() => {
     if (!id) return;
     let cancelled = false;
 
-    Promise.all([fetchNode(id), fetchMetrics(id)])
+    Promise.all([fetchNode(id), fetchMetrics(id, 1)])
       .then(([n, data]) => {
-        if (!cancelled) {
-          setNode(n);
-          setMetrics(data);
-        }
+        if (!cancelled) { setNode(n); setMetrics(data); }
       })
-      .catch((e) => {
-        if (!cancelled) setError(e instanceof Error ? e.message : String(e));
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
+      .catch((e) => { if (!cancelled) setError(e instanceof Error ? e.message : String(e)); })
+      .finally(() => { if (!cancelled) setLoading(false); });
 
-    const unsub = subscribeNodeDetail(id, (m) => {
-      if (cancelled) return;
-      setMetrics((prev) => [m, ...prev].slice(0, MAX_POINTS));
-    });
-
-    return () => {
-      cancelled = true;
-      unsub();
-    };
+    return () => { cancelled = true; };
   }, [id]);
+
+  // 切换时间范围时重新拉取历史数据
+  useEffect(() => {
+    if (!id || loading) return;
+    let cancelled = false;
+    setChartLoading(true);
+    fetchMetrics(id, range)
+      .then((data) => { if (!cancelled) setMetrics(data); })
+      .catch(() => {})
+      .finally(() => { if (!cancelled) setChartLoading(false); });
+    return () => { cancelled = true; };
+  }, [range]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // 仅 1h 模式下订阅 SSE 实时追加
+  useEffect(() => {
+    if (!id || range !== 1) return;
+    const unsub = subscribeNodeDetail(id, (m) => {
+      setMetrics((prev) => {
+        const next = [m, ...prev];
+        return next.length > 300 ? next.slice(0, 300) : next;
+      });
+    });
+    return unsub;
+  }, [id, range]);
 
   const latest = metrics[0];
 
   const chartData = useMemo(
     () =>
       [...metrics].reverse().map((m) => ({
-        time: fmtTime(m.reported_at),
+        time: fmtTime(m.reported_at, range),
         cpu: parseFloat(m.cpu_percent.toFixed(1)),
         memPct:
           m.mem_total > 0
@@ -290,9 +311,7 @@ export default function NodeDetail() {
               </>
             )}
             {node?.country_code && (
-              <span className="text-base leading-none flex-shrink-0">
-                {countryFlag(node.country_code)}
-              </span>
+              <img src={countryFlagUrl(node.country_code)!} alt={node.country_code} className="w-5 h-auto rounded-sm flex-shrink-0" />
             )}
             <h1
               className="text-base font-bold text-[var(--color-ink)] truncate"
@@ -417,10 +436,33 @@ export default function NodeDetail() {
               </div>
             ) : (
               <div className="space-y-5">
+                {/* 时间范围选择器 */}
+                <div className="flex items-center gap-2">
+                  {RANGES.map(({ label, hours }) => (
+                    <button
+                      key={label}
+                      onClick={() => setRange(hours as RangeHours)}
+                      className={`px-3 py-1 rounded-lg text-xs font-semibold border-2 border-[var(--color-ink)] transition-all duration-150
+                        ${range === hours
+                          ? "bg-[var(--color-ink)] text-white shadow-[2px_2px_0_0_#8B5CF6]"
+                          : "bg-white text-[var(--color-ink)] shadow-[2px_2px_0_0_#1E293B] hover:bg-[var(--color-cream)]"
+                        }`}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                  {chartLoading && (
+                    <span className="text-xs text-[var(--color-muted-foreground)] animate-pulse ml-2">加载中…</span>
+                  )}
+                  {range === 1 && (
+                    <span className="text-xs text-[var(--color-emerald)] ml-auto font-semibold">● 实时</span>
+                  )}
+                </div>
+
                 {/* CPU */}
                 <ChartCard
                   title="CPU 使用率"
-                  sub={`最近 ${metrics.length} 条 · 实时`}
+                  sub={`${metrics.length} 个数据点`}
                   accent={ACCENTS[0]}
                 >
                   <ChartContainer

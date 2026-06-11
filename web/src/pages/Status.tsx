@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link } from "wouter";
-import { countryFlag, fetchStatus, type StatusNode } from "../api";
+import { countryFlagUrl, fetchStatus, type StatusNode } from "../api";
 
 function UptimeBar({ days }: { days: { date: string; up: boolean }[] }) {
   return (
@@ -21,7 +21,7 @@ function UptimeBar({ days }: { days: { date: string; up: boolean }[] }) {
 }
 
 function NodeRow({ node }: { node: StatusNode }) {
-  const flag = countryFlag(node.country_code);
+  const flag = countryFlagUrl(node.country_code);
   return (
     <div
       className="bg-white rounded-2xl border-2 border-[var(--color-ink)] p-5
@@ -47,9 +47,7 @@ function NodeRow({ node }: { node: StatusNode }) {
           <span className="h-2.5 w-2.5 rounded-full bg-red-400 flex-shrink-0" />
         )}
         {flag && (
-          <span className="text-base leading-none" title={node.location ?? undefined}>
-            {flag}
-          </span>
+          <img src={flag} alt={node.country_code ?? ""} title={node.location ?? undefined} className="w-5 h-auto rounded-sm" />
         )}
         <span
           className="font-bold text-[var(--color-ink)] text-base"

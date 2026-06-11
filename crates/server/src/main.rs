@@ -132,42 +132,61 @@ impl Monitor for MonitorService {
             .metrics
             .ok_or_else(|| Status::invalid_argument("missing metrics"))?;
 
-        // 查 token_id（global token 直接连的不会有 token_id）
-        let token_id: Option<i64> = if let Some(ref tok) = token_val {
-            sqlx::query_scalar("SELECT id FROM tokens WHERE token = $1")
-                .bind(tok)
-                .fetch_optional(&self.db)
-                .await
-                .unwrap_or(None)
+        // 先尝试认领 pending token 槽位（admin 创建 token 时预插的 hostname IS NULL 行）
+        let claimed_id: Option<i64> = if let Some(ref tok) = token_val {
+            sqlx::query_scalar(
+                "UPDATE nodes SET hostname=$1, ip=$2, os=$3, arch=$4, last_seen=NOW(),
+                 cpu_model=COALESCE(NULLIF($5,''), cpu_model)
+                 WHERE token=$6 AND hostname IS NULL
+                 RETURNING id",
+            )
+            .bind(&node.hostname)
+            .bind(&node.ip)
+            .bind(&node.os)
+            .bind(&node.arch)
+            .bind(if node.cpu_model.is_empty() {
+                None::<&str>
+            } else {
+                Some(node.cpu_model.as_str())
+            })
+            .bind(tok)
+            .fetch_optional(&self.db)
+            .await
+            .map_err(|e| Status::internal(e.to_string()))?
         } else {
             None
         };
 
-        let node_id: i64 = sqlx::query(
-            "INSERT INTO nodes (id, hostname, ip, os, arch, last_seen, token_id, cpu_model)
-             VALUES ($1, $2, $3, $4, $5, NOW(), $6, $7)
-             ON CONFLICT (hostname) DO UPDATE
-             SET ip = EXCLUDED.ip, os = EXCLUDED.os, arch = EXCLUDED.arch,
-                 last_seen = NOW(),
-                 token_id = COALESCE(EXCLUDED.token_id, nodes.token_id),
-                 cpu_model = COALESCE(NULLIF(EXCLUDED.cpu_model, ''), nodes.cpu_model)
-             RETURNING id",
-        )
-        .bind(self.next_id())
-        .bind(&node.hostname)
-        .bind(&node.ip)
-        .bind(&node.os)
-        .bind(&node.arch)
-        .bind(token_id)
-        .bind(if node.cpu_model.is_empty() {
-            None
+        let node_id: i64 = if let Some(id) = claimed_id {
+            id
         } else {
-            Some(&node.cpu_model)
-        })
-        .fetch_one(&self.db)
-        .await
-        .map_err(|e| Status::internal(e.to_string()))?
-        .get("id");
+            // 已连接节点续报 / 全局 token 节点：按 hostname UPSERT
+            sqlx::query(
+                "INSERT INTO nodes (id, hostname, ip, os, arch, last_seen, token, cpu_model)
+                 VALUES ($1, $2, $3, $4, $5, NOW(), $6, $7)
+                 ON CONFLICT (hostname) DO UPDATE
+                 SET ip = EXCLUDED.ip, os = EXCLUDED.os, arch = EXCLUDED.arch,
+                     last_seen = NOW(),
+                     token = COALESCE(nodes.token, EXCLUDED.token),
+                     cpu_model = COALESCE(NULLIF(EXCLUDED.cpu_model, ''), nodes.cpu_model)
+                 RETURNING id",
+            )
+            .bind(self.next_id())
+            .bind(&node.hostname)
+            .bind(&node.ip)
+            .bind(&node.os)
+            .bind(&node.arch)
+            .bind(token_val.as_deref())
+            .bind(if node.cpu_model.is_empty() {
+                None
+            } else {
+                Some(&node.cpu_model)
+            })
+            .fetch_one(&self.db)
+            .await
+            .map_err(|e| Status::internal(e.to_string()))?
+            .get("id")
+        };
 
         // 提取延迟数据（同时写入 metrics 和 nodes）
         let (lat_cu, lat_cm, lat_ct) = if !req.latencies.is_empty() {
@@ -248,7 +267,7 @@ impl Monitor for MonitorService {
 
         // 查询完整节点信息（用于广播和返回开关状态）
         let row = sqlx::query_as::<_, NodeRow>(
-            "SELECT id, hostname, ip, os, arch, last_seen, expires_at, price, price_currency, website_url, latency_test_enabled, latency_cu_ms, latency_cm_ms, latency_ct_ms, latency_updated_at, NULL::BIGINT AS token_id, NULL::TEXT AS token_name, NULL::TEXT AS token_value, cpu_model, net_rx_rate, net_tx_rate, country_code, location FROM nodes WHERE id = $1",
+            "SELECT id, hostname, ip, os, arch, last_seen, expires_at, price, price_currency, website_url, latency_test_enabled, latency_cu_ms, latency_cm_ms, latency_ct_ms, latency_updated_at, name, token AS token_value, cpu_model, net_rx_rate, net_tx_rate, country_code, location FROM nodes WHERE id = $1",
         )
         .bind(node_id)
         .fetch_one(&self.db)
@@ -364,10 +383,10 @@ struct AppState {
 #[derive(FromRow)]
 struct NodeRow {
     id: i64,
-    hostname: String,
-    ip: String,
-    os: String,
-    arch: String,
+    hostname: Option<String>,
+    ip: Option<String>,
+    os: Option<String>,
+    arch: Option<String>,
     last_seen: DateTime<Utc>,
     expires_at: Option<DateTime<Utc>>,
     price: Option<f32>,
@@ -378,8 +397,7 @@ struct NodeRow {
     latency_cm_ms: Option<f32>,
     latency_ct_ms: Option<f32>,
     latency_updated_at: Option<DateTime<Utc>>,
-    token_id: Option<i64>,
-    token_name: Option<String>,
+    name: Option<String>,
     token_value: Option<String>,
     cpu_model: Option<String>,
     net_rx_rate: Option<i64>,
@@ -391,6 +409,7 @@ struct NodeRow {
 #[derive(Serialize)]
 struct NodeResponse {
     id: String,
+    name: Option<String>,
     hostname: String,
     os: String,
     arch: String,
@@ -411,9 +430,10 @@ impl From<NodeRow> for NodeResponse {
     fn from(r: NodeRow) -> Self {
         Self {
             id: r.id.to_string(),
-            hostname: r.hostname,
-            os: r.os,
-            arch: r.arch,
+            name: r.name.clone(),
+            hostname: r.hostname.unwrap_or_default(),
+            os: r.os.unwrap_or_default(),
+            arch: r.arch.unwrap_or_default(),
             cpu_model: r.cpu_model.clone(),
             last_seen: r.last_seen,
             website_url: r.website_url,
@@ -497,12 +517,12 @@ impl From<MetricRow> for MetricResponse {
 
 #[derive(Deserialize)]
 struct MetricsQuery {
-    #[serde(default = "default_limit")]
-    limit: i64,
+    #[serde(default = "default_hours")]
+    hours: i64,
 }
 
-fn default_limit() -> i64 {
-    60
+fn default_hours() -> i64 {
+    1
 }
 
 // ── Token 相关类型 ────────────────────────────────────────────────────────────
@@ -547,7 +567,7 @@ async fn get_node(
 ) -> Result<Json<NodeResponse>, StatusCode> {
     let id: i64 = id.parse().map_err(|_| StatusCode::BAD_REQUEST)?;
     let row = sqlx::query_as::<_, NodeRow>(
-        "SELECT id, hostname, ip, os, arch, last_seen, expires_at, price, price_currency, website_url, latency_test_enabled, latency_cu_ms, latency_cm_ms, latency_ct_ms, latency_updated_at, NULL::BIGINT AS token_id, NULL::TEXT AS token_name, NULL::TEXT AS token_value, cpu_model, net_rx_rate, net_tx_rate, country_code, location FROM nodes WHERE id = $1",
+        "SELECT id, hostname, ip, os, arch, last_seen, expires_at, price, price_currency, website_url, latency_test_enabled, latency_cu_ms, latency_cm_ms, latency_ct_ms, latency_updated_at, name, token AS token_value, cpu_model, net_rx_rate, net_tx_rate, country_code, location FROM nodes WHERE id = $1",
     )
     .bind(id)
     .fetch_optional(&s.db)
@@ -567,9 +587,9 @@ async fn sse_events(
         "SELECT n.id, n.hostname, n.ip, n.os, n.arch, n.last_seen, n.expires_at,
                 n.price, n.price_currency, n.website_url, n.latency_test_enabled,
                 n.latency_cu_ms, n.latency_cm_ms, n.latency_ct_ms, n.latency_updated_at,
-                n.token_id, NULL::TEXT AS token_name, NULL::TEXT AS token_value,
+                n.name, n.token AS token_value,
                 n.cpu_model, n.net_rx_rate, n.net_tx_rate, n.country_code, n.location
-         FROM nodes n ORDER BY n.last_seen DESC",
+         FROM nodes n WHERE n.hostname IS NOT NULL ORDER BY n.last_seen DESC",
     )
     .fetch_all(&s.db)
     .await
@@ -602,18 +622,25 @@ async fn node_metrics(
     Query(q): Query<MetricsQuery>,
 ) -> Result<Json<Vec<MetricResponse>>, StatusCode> {
     let node_id: i64 = id.parse().map_err(|_| StatusCode::BAD_REQUEST)?;
+    let hours = q.hours.clamp(1, 168);
+    let cutoff = chrono::Utc::now() - chrono::Duration::hours(hours);
+    // 最多返回 300 个点；超出时按均匀间隔采样
     let rows = sqlx::query_as::<_, MetricRow>(
         "SELECT id, cpu_percent, mem_total, mem_used, swap_total, swap_used,
                 load1, load5, load15, uptime_secs, reported_at,
                 latency_cu_ms, latency_cm_ms, latency_ct_ms,
                 net_rx_rate, net_tx_rate, tcp_connections
-         FROM metrics
-         WHERE node_id = $1
-         ORDER BY reported_at DESC
-         LIMIT $2",
+         FROM (
+           SELECT *, ROW_NUMBER() OVER (ORDER BY reported_at) AS rn,
+                  COUNT(*) OVER () AS cnt
+           FROM metrics
+           WHERE node_id=$1 AND reported_at > $2
+         ) t
+         WHERE t.cnt <= 300 OR t.rn % (t.cnt / 300 + 1) = 0
+         ORDER BY reported_at ASC",
     )
     .bind(node_id)
-    .bind(q.limit)
+    .bind(cutoff)
     .fetch_all(&s.db)
     .await
     .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
@@ -623,7 +650,8 @@ async fn node_metrics(
 
 async fn list_tokens(State(s): State<AppState>) -> Result<Json<Vec<TokenResponse>>, StatusCode> {
     let rows = sqlx::query_as::<_, TokenRow>(
-        "SELECT id, name, token, created_at FROM tokens ORDER BY created_at DESC",
+        "SELECT id, name, token, token_created_at AS created_at
+         FROM nodes WHERE token IS NOT NULL ORDER BY token_created_at DESC",
     )
     .fetch_all(&s.db)
     .await
@@ -637,19 +665,22 @@ async fn create_token(
 ) -> Result<Json<TokenResponse>, StatusCode> {
     let id = s.id_gen.lock().unwrap().next();
     let token = Uuid::new_v4().to_string().replace('-', "");
-    sqlx::query("INSERT INTO tokens (id, name, token) VALUES ($1, $2, $3)")
-        .bind(id)
-        .bind(&req.name)
-        .bind(&token)
-        .execute(&s.db)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    sqlx::query(
+        "INSERT INTO nodes (id, name, token, token_created_at, last_seen)
+         VALUES ($1, $2, $3, NOW(), NOW())",
+    )
+    .bind(id)
+    .bind(&req.name)
+    .bind(&token)
+    .execute(&s.db)
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    // 同步更新内存中的 token set
     s.token_set.write().unwrap().insert(token.clone());
 
     let row = sqlx::query_as::<_, TokenRow>(
-        "SELECT id, name, token, created_at FROM tokens WHERE id = $1",
+        "SELECT id, name, token, token_created_at AS created_at
+         FROM nodes WHERE id = $1",
     )
     .bind(id)
     .fetch_one(&s.db)
@@ -664,19 +695,31 @@ async fn delete_token(
     Path(id): Path<String>,
 ) -> Result<StatusCode, StatusCode> {
     let id: i64 = id.parse().map_err(|_| StatusCode::BAD_REQUEST)?;
-    // 先取出 token 值以便从内存 set 中删除
-    let row: Option<(String,)> = sqlx::query_as("SELECT token FROM tokens WHERE id = $1")
-        .bind(id)
-        .fetch_optional(&s.db)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let row: Option<(String, Option<String>)> =
+        sqlx::query_as("SELECT token, hostname FROM nodes WHERE id=$1 AND token IS NOT NULL")
+            .bind(id)
+            .fetch_optional(&s.db)
+            .await
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    if let Some((token,)) = row {
-        sqlx::query("DELETE FROM tokens WHERE id = $1")
+    if let Some((token, hostname)) = row {
+        if hostname.is_none() {
+            // pending token，agent 尚未连接 → 删除整行
+            sqlx::query("DELETE FROM nodes WHERE id=$1")
+                .bind(id)
+                .execute(&s.db)
+                .await
+                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        } else {
+            // 已连接的节点 → 只清除 token 字段，保留节点数据
+            sqlx::query(
+                "UPDATE nodes SET token=NULL, name=NULL, token_created_at=NULL WHERE id=$1",
+            )
             .bind(id)
             .execute(&s.db)
             .await
             .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        }
         s.token_set.write().unwrap().remove(&token);
     }
     Ok(StatusCode::NO_CONTENT)
@@ -686,6 +729,7 @@ async fn delete_token(
 #[derive(Serialize)]
 struct AdminNodeResponse {
     id: String,
+    connected: bool,
     hostname: String,
     ip: String,
     os: String,
@@ -700,8 +744,7 @@ struct AdminNodeResponse {
     latency_cm_ms: Option<f32>,
     latency_ct_ms: Option<f32>,
     latency_updated_at: Option<DateTime<Utc>>,
-    token_id: Option<String>,
-    token_name: Option<String>,
+    name: Option<String>,
     token: Option<String>,
     cpu_model: Option<String>,
     net_rx_rate: Option<i64>,
@@ -714,10 +757,11 @@ impl From<NodeRow> for AdminNodeResponse {
     fn from(r: NodeRow) -> Self {
         Self {
             id: r.id.to_string(),
-            hostname: r.hostname,
-            ip: r.ip,
-            os: r.os,
-            arch: r.arch,
+            connected: r.hostname.is_some(),
+            hostname: r.hostname.unwrap_or_default(),
+            ip: r.ip.unwrap_or_default(),
+            os: r.os.unwrap_or_default(),
+            arch: r.arch.unwrap_or_default(),
             last_seen: r.last_seen,
             expires_at: r.expires_at,
             price: r.price,
@@ -728,8 +772,7 @@ impl From<NodeRow> for AdminNodeResponse {
             latency_cm_ms: r.latency_cm_ms,
             latency_ct_ms: r.latency_ct_ms,
             latency_updated_at: r.latency_updated_at,
-            token_id: r.token_id.map(|id| id.to_string()),
-            token_name: r.token_name,
+            name: r.name,
             token: r.token_value,
             cpu_model: r.cpu_model,
             net_rx_rate: r.net_rx_rate,
@@ -747,11 +790,10 @@ async fn admin_list_nodes(
         "SELECT n.id, n.hostname, n.ip, n.os, n.arch, n.last_seen, n.expires_at,
                 n.price, n.price_currency, n.website_url, n.latency_test_enabled,
                 n.latency_cu_ms, n.latency_cm_ms, n.latency_ct_ms, n.latency_updated_at,
-                n.token_id, t.name AS token_name, t.token AS token_value,
+                n.name, n.token AS token_value,
                 n.cpu_model, n.net_rx_rate, n.net_tx_rate, n.country_code, n.location
          FROM nodes n
-         LEFT JOIN tokens t ON t.id = n.token_id
-         ORDER BY n.last_seen DESC",
+         ORDER BY n.hostname IS NULL, n.last_seen DESC",
     )
     .fetch_all(&s.db)
     .await
@@ -859,10 +901,11 @@ async fn admin_stats(State(s): State<AppState>) -> Result<Json<AdminStats>, Stat
     .await
     .unwrap_or(0);
 
-    let tokens_count: i64 = sqlx::query_scalar("SELECT count(*) FROM tokens")
-        .fetch_one(&s.db)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let tokens_count: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM nodes WHERE token IS NOT NULL")
+            .fetch_one(&s.db)
+            .await
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     #[derive(sqlx::FromRow)]
     struct DailyRow {
@@ -941,7 +984,7 @@ async fn public_status(
     }
 
     let snodes = sqlx::query_as::<_, SNodeRow>(
-        "SELECT id, hostname, country_code, location, last_seen FROM nodes ORDER BY last_seen DESC",
+        "SELECT id, hostname, country_code, location, last_seen FROM nodes WHERE hostname IS NOT NULL ORDER BY last_seen DESC",
     )
     .fetch_all(&s.db)
     .await
@@ -1017,10 +1060,10 @@ async fn init_schema(pool: &PgPool) -> Result<()> {
     sqlx::query(
         "CREATE TABLE IF NOT EXISTS nodes (
             id        BIGINT PRIMARY KEY,
-            hostname  TEXT   NOT NULL UNIQUE,
-            ip        TEXT   NOT NULL,
-            os        TEXT   NOT NULL,
-            arch      TEXT   NOT NULL,
+            hostname  TEXT   UNIQUE,
+            ip        TEXT,
+            os        TEXT,
+            arch      TEXT,
             last_seen TIMESTAMPTZ NOT NULL DEFAULT NOW()
         )",
     )
@@ -1052,6 +1095,11 @@ async fn init_schema(pool: &PgPool) -> Result<()> {
     .execute(pool)
     .await?;
 
+    // 补 reported_at 单列索引，让 retention DELETE 不走全表扫描
+    sqlx::query("CREATE INDEX IF NOT EXISTS idx_metrics_reported_at ON metrics(reported_at)")
+        .execute(pool)
+        .await?;
+
     sqlx::query("ALTER TABLE nodes ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ")
         .execute(pool)
         .await?;
@@ -1082,24 +1130,6 @@ async fn init_schema(pool: &PgPool) -> Result<()> {
         .execute(pool)
         .await?;
 
-    // 创建 tokens 表，用于存储 agent 注册 token
-    sqlx::query(
-        "CREATE TABLE IF NOT EXISTS tokens (
-            id         BIGINT PRIMARY KEY,
-            name       TEXT   NOT NULL,
-            token      TEXT   NOT NULL UNIQUE,
-            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-        )",
-    )
-    .execute(pool)
-    .await?;
-
-    // tokens 表创建后才能添加外键引用
-    sqlx::query(
-        "ALTER TABLE nodes ADD COLUMN IF NOT EXISTS token_id BIGINT REFERENCES tokens(id) ON DELETE SET NULL",
-    )
-    .execute(pool)
-    .await?;
     sqlx::query("ALTER TABLE nodes ADD COLUMN IF NOT EXISTS cpu_model TEXT")
         .execute(pool)
         .await?;
@@ -1134,12 +1164,98 @@ async fn init_schema(pool: &PgPool) -> Result<()> {
         .execute(pool)
         .await?;
 
+    // === tokens → nodes 合并迁移（幂等，可重复执行）===
+
+    // 给 nodes 加 token 相关列（name = agent 显示名称）
+    sqlx::query("ALTER TABLE nodes ADD COLUMN IF NOT EXISTS token TEXT")
+        .execute(pool)
+        .await
+        .ok();
+    sqlx::query("ALTER TABLE nodes ADD COLUMN IF NOT EXISTS name TEXT")
+        .execute(pool)
+        .await
+        .ok();
+    sqlx::query("ALTER TABLE nodes ADD COLUMN IF NOT EXISTS token_created_at TIMESTAMPTZ")
+        .execute(pool)
+        .await
+        .ok();
+
+    // 兼容迁移：token_name → name（若旧列存在则迁移数据后删除）
+    sqlx::query(
+        "DO $$ BEGIN
+         IF EXISTS (SELECT FROM information_schema.columns WHERE table_name='nodes' AND column_name='token_name') THEN
+           UPDATE nodes SET name=token_name WHERE name IS NULL;
+           ALTER TABLE nodes DROP COLUMN token_name;
+         END IF;
+         END $$",
+    )
+    .execute(pool)
+    .await.ok();
+
+    // hostname/ip/os/arch 改为可空（pending token 行 hostname IS NULL）
+    sqlx::query("ALTER TABLE nodes ALTER COLUMN hostname DROP NOT NULL")
+        .execute(pool)
+        .await
+        .ok();
+    sqlx::query("ALTER TABLE nodes ALTER COLUMN ip DROP NOT NULL")
+        .execute(pool)
+        .await
+        .ok();
+    sqlx::query("ALTER TABLE nodes ALTER COLUMN os DROP NOT NULL")
+        .execute(pool)
+        .await
+        .ok();
+    sqlx::query("ALTER TABLE nodes ALTER COLUMN arch DROP NOT NULL")
+        .execute(pool)
+        .await
+        .ok();
+
+    // 若 tokens 表还存在，迁移数据后删掉
+    sqlx::query(
+        "DO $$ BEGIN
+         IF EXISTS (SELECT FROM information_schema.tables WHERE table_name='tokens') THEN
+           UPDATE nodes n
+             SET token=t.token, name=t.name, token_created_at=t.created_at
+           FROM tokens t
+           WHERE n.token_id=t.id AND n.token IS NULL;
+           INSERT INTO nodes (id, token, token_name, token_created_at, last_seen)
+           SELECT t.id, t.token, t.name, t.created_at, t.created_at
+           FROM tokens t
+           WHERE NOT EXISTS (SELECT 1 FROM nodes n WHERE n.token_id=t.id)
+           ON CONFLICT DO NOTHING;
+         END IF;
+         END $$",
+    )
+    .execute(pool)
+    .await
+    .ok();
+
+    // token 列唯一索引（部分索引，只对非 NULL）
+    sqlx::query(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_nodes_token ON nodes(token) WHERE token IS NOT NULL",
+    )
+    .execute(pool)
+    .await
+    .ok();
+
+    // 删除旧 token_id 外键列
+    sqlx::query("ALTER TABLE nodes DROP COLUMN IF EXISTS token_id")
+        .execute(pool)
+        .await
+        .ok();
+
+    // 删除 tokens 表
+    sqlx::query("DROP TABLE IF EXISTS tokens")
+        .execute(pool)
+        .await
+        .ok();
+
     Ok(())
 }
 
 /// 从数据库加载所有 token 到内存 HashSet，启动时调用
 async fn load_token_set(pool: &PgPool) -> Result<HashSet<String>> {
-    let rows: Vec<(String,)> = sqlx::query_as("SELECT token FROM tokens")
+    let rows: Vec<(String,)> = sqlx::query_as("SELECT token FROM nodes WHERE token IS NOT NULL")
         .fetch_all(pool)
         .await?;
     Ok(rows.into_iter().map(|(t,)| t).collect())
