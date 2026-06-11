@@ -35,8 +35,8 @@ function buildColorVars(config: ChartConfig): React.CSSProperties {
 
 const ChartContainer = React.forwardRef<
   HTMLDivElement,
-  React.ComponentProps<"div"> & { config: ChartConfig; children: React.ReactNode }
->(({ id, className, children, config, ...props }, ref) => {
+  React.ComponentProps<"div"> & { config: ChartConfig; children: React.ReactNode; height?: number }
+>(({ id, className, children, config, height = 200, ...props }, ref) => {
   const chartId = `chart-${id ?? React.useId().replace(/:/g, "")}`;
   return (
     <ChartContext.Provider value={{ config }}>
@@ -44,7 +44,7 @@ const ChartContainer = React.forwardRef<
         ref={ref}
         data-chart={chartId}
         className={cn("w-full text-xs", className)}
-        style={buildColorVars(config)}
+        style={{ height, ...buildColorVars(config) }}
         {...props}
       >
         <ResponsiveContainer width="100%" height="100%">

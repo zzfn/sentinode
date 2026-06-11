@@ -339,7 +339,7 @@ function DbStatsView() {
           ) : (
             <ChartContainer
               config={{ count: { label: "新增条数", color: "hsl(var(--chart-1))" } }}
-              className="h-[220px] w-full"
+              height={220} className="w-full"
             >
               <BarChart data={stats.daily_metrics} margin={{ top: 4, right: 8, bottom: 0, left: 0 }}>
                 <defs>

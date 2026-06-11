@@ -182,7 +182,7 @@ export default function NodeDetail() {
                     <CardDescription>最近 {metrics.length} 条，实时更新</CardDescription>
                   </CardHeader>
                   <CardContent>
-                    <ChartContainer config={{ cpu: { label: "CPU", color: "hsl(var(--chart-1))" } }} className="h-[200px] w-full">
+                    <ChartContainer config={{ cpu: { label: "CPU", color: "hsl(var(--chart-1))" } }} className="w-full">
                       <AreaChart data={chartData} margin={{ top: 4, right: 8, bottom: 0, left: 0 }}>
                         <defs>
                           <linearGradient id="cpuGrad" x1="0" y1="0" x2="0" y2="1">
@@ -211,7 +211,7 @@ export default function NodeDetail() {
                         memPct: { label: "内存", color: "hsl(var(--chart-2))" },
                         swapPct: { label: "交换", color: "hsl(var(--chart-3))" },
                       } satisfies ChartConfig}
-                      className="h-[200px] w-full"
+                      className="w-full"
                     >
                       <AreaChart data={chartData} margin={{ top: 4, right: 8, bottom: 0, left: 0 }}>
                         <defs>
@@ -247,7 +247,7 @@ export default function NodeDetail() {
                         load5: { label: "5m", color: "hsl(var(--chart-5))" },
                         load15: { label: "15m", color: "hsl(262 83% 58%)" },
                       } satisfies ChartConfig}
-                      className="h-[200px] w-full"
+                      className="w-full"
                     >
                       <LineChart data={chartData} margin={{ top: 4, right: 8, bottom: 0, left: 0 }}>
                         <CartesianGrid strokeDasharray="3 3" stroke="rgba(128,128,128,0.15)" />
