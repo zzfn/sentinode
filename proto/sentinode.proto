@@ -35,14 +35,21 @@ message Metrics {
   repeated NetStat  networks = 10;
 }
 
+message LatencyResult {
+  string isp        = 1;
+  float  latency_ms = 2;
+}
+
 message ReportRequest {
-  NodeInfo node    = 1;
-  Metrics  metrics = 2;
+  NodeInfo node      = 1;
+  Metrics  metrics   = 2;
   int64    timestamp = 3;
+  repeated LatencyResult latencies = 4;
 }
 
 message ReportResponse {
-  bool ok = 1;
+  bool ok                   = 1;
+  bool latency_test_enabled = 2;
 }
 
 service Monitor {

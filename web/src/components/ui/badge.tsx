@@ -17,6 +17,8 @@ const badgeVariants = cva(
           "text-[var(--color-foreground)]",
         success:
           "border-transparent bg-[var(--color-success)] text-white shadow hover:bg-[var(--color-success)]/80",
+        warning:
+          "border-transparent bg-[var(--color-warning)] text-white shadow hover:bg-[var(--color-warning)]/80",
       },
     },
     defaultVariants: {

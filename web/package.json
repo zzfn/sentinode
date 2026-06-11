@@ -3,19 +3,22 @@
   "private": true,
   "scripts": {
     "dev": "bun server.ts",
-    "build": "bunx @tailwindcss/cli -i ./src/globals.css -o ./dist/globals.css --minify && bun build src/index.tsx --outdir dist --target browser --minify --define \"process.env.API_BASE='${API_BASE:-}'\" && cp index.html dist/"
+    "build": "bunx @tailwindcss/cli -i ./src/globals.css -o ./dist/globals.css --minify && bun build src/index.tsx --outdir dist --target browser --minify --define \"process.env.API_BASE='${API_BASE:-}'\" && cp index.html favicon.svg dist/"
   },
   "dependencies": {
     "@radix-ui/react-dialog": "^1.1.16",
     "@radix-ui/react-label": "^2.1.9",
+    "@radix-ui/react-select": "^2.3.0",
     "@radix-ui/react-separator": "^1.1.9",
     "@radix-ui/react-slot": "^1.2.5",
+    "@radix-ui/react-switch": "^1.3.0",
     "@tailwindcss/vite": "^4.3.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "lucide-react": "^1.17.0",
     "react": "^19",
     "react-dom": "^19",
+    "recharts": "^3.8.1",
     "tailwind-merge": "^3.6.0",
     "tailwindcss": "^4.3.0",
     "wouter": "^3"

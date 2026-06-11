@@ -2,7 +2,8 @@ use anyhow::Result;
 use axum::{
     extract::{Path, Query, State},
     http::StatusCode,
-    routing::get,
+    response::sse::{Event, KeepAlive, Sse},
+    routing::{get, put},
     Json, Router,
 };
 use chrono::{DateTime, Utc};
@@ -12,10 +13,15 @@ use common::{
     ReportRequest, ReportResponse,
 };
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 use sqlx::{FromRow, PgPool, Row};
 use std::collections::HashSet;
+use std::convert::Infallible;
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
+use tokio::sync::broadcast;
+use tokio_stream::wrappers::BroadcastStream;
+use tokio_stream::StreamExt;
 use tonic::service::Routes as GrpcRoutes;
 use tonic::{async_trait, Request, Response, Status};
 use tower_http::cors::CorsLayer;
@@ -93,6 +99,7 @@ struct Cli {
 struct MonitorService {
     db: PgPool,
     id_gen: Arc<Mutex<SnowflakeGen>>,
+    event_tx: broadcast::Sender<String>,
 }
 
 impl MonitorService {
@@ -154,11 +161,84 @@ impl Monitor for MonitorService {
         .await
         .map_err(|e| Status::internal(e.to_string()))?;
 
+        // 若 agent 上报了延迟数据，更新节点延迟字段
+        if !req.latencies.is_empty() {
+            let mut cu = None::<f32>;
+            let mut cm = None::<f32>;
+            let mut ct = None::<f32>;
+            for l in &req.latencies {
+                let v = if l.latency_ms < 0.0 {
+                    None
+                } else {
+                    Some(l.latency_ms)
+                };
+                match l.isp.as_str() {
+                    "cu" => cu = v,
+                    "cm" => cm = v,
+                    "ct" => ct = v,
+                    _ => {}
+                }
+            }
+            sqlx::query(
+                "UPDATE nodes SET latency_cu_ms = $1, latency_cm_ms = $2, latency_ct_ms = $3,
+                 latency_updated_at = NOW() WHERE id = $4",
+            )
+            .bind(cu)
+            .bind(cm)
+            .bind(ct)
+            .bind(node_id)
+            .execute(&self.db)
+            .await
+            .map_err(|e| Status::internal(e.to_string()))?;
+        }
+
+        // 查询完整节点信息（用于广播和返回开关状态）
+        let row = sqlx::query_as::<_, NodeRow>(
+            "SELECT id, hostname, ip, os, arch, last_seen, expires_at, price, price_currency, website_url, latency_test_enabled, latency_cu_ms, latency_cm_ms, latency_ct_ms, latency_updated_at FROM nodes WHERE id = $1",
+        )
+        .bind(node_id)
+        .fetch_one(&self.db)
+        .await
+        .map_err(|e| Status::internal(e.to_string()))?;
+
+        let enabled = row.latency_test_enabled.unwrap_or(false);
+
+        // 广播 node_updated 事件给所有 SSE 客户端
+        let node_resp: NodeResponse = row.into();
+        if let Ok(payload) = serde_json::to_string(&json!({
+            "type": "node_updated",
+            "data": node_resp,
+        })) {
+            let _ = self.event_tx.send(payload);
+        }
+
+        // 广播 metric_added 事件，供节点详情页实时追加趋势数据
+        if let Ok(payload) = serde_json::to_string(&json!({
+            "type": "metric_added",
+            "node_id": node_id.to_string(),
+            "data": {
+                "cpu_percent": m.cpu_percent,
+                "mem_total": m.mem_total as i64,
+                "mem_used": m.mem_used as i64,
+                "swap_total": m.swap_total as i64,
+                "swap_used": m.swap_used as i64,
+                "load1": m.load1,
+                "load5": m.load5,
+                "load15": m.load15,
+                "uptime_secs": node.uptime_secs as i64,
+            },
+        })) {
+            let _ = self.event_tx.send(payload);
+        }
+
         info!(
-            "recorded metrics for {} (node_id={})",
-            node.hostname, node_id
+            "recorded metrics for {} (node_id={}) latency_test_enabled={}",
+            node.hostname, node_id, enabled
         );
-        Ok(Response::new(ReportResponse { ok: true }))
+        Ok(Response::new(ReportResponse {
+            ok: true,
+            latency_test_enabled: enabled,
+        }))
     }
 }
 
@@ -169,6 +249,7 @@ struct AppState {
     db: PgPool,
     id_gen: Arc<Mutex<SnowflakeGen>>,
     token_set: Arc<std::sync::RwLock<HashSet<String>>>,
+    event_tx: broadcast::Sender<String>,
 }
 
 #[derive(FromRow)]
@@ -179,16 +260,29 @@ struct NodeRow {
     os: String,
     arch: String,
     last_seen: DateTime<Utc>,
+    expires_at: Option<DateTime<Utc>>,
+    price: Option<f32>,
+    price_currency: Option<String>,
+    website_url: Option<String>,
+    latency_test_enabled: Option<bool>,
+    latency_cu_ms: Option<f32>,
+    latency_cm_ms: Option<f32>,
+    latency_ct_ms: Option<f32>,
+    latency_updated_at: Option<DateTime<Utc>>,
 }
 
 #[derive(Serialize)]
 struct NodeResponse {
-    id: String, // i64 → string，避免 JS 精度丢失
+    id: String,
     hostname: String,
-    ip: String,
     os: String,
     arch: String,
     last_seen: DateTime<Utc>,
+    website_url: Option<String>,
+    latency_cu_ms: Option<f32>,
+    latency_cm_ms: Option<f32>,
+    latency_ct_ms: Option<f32>,
+    latency_updated_at: Option<DateTime<Utc>>,
 }
 
 impl From<NodeRow> for NodeResponse {
@@ -196,10 +290,14 @@ impl From<NodeRow> for NodeResponse {
         Self {
             id: r.id.to_string(),
             hostname: r.hostname,
-            ip: r.ip,
             os: r.os,
             arch: r.arch,
             last_seen: r.last_seen,
+            website_url: r.website_url,
+            latency_cu_ms: r.latency_cu_ms,
+            latency_cm_ms: r.latency_cm_ms,
+            latency_ct_ms: r.latency_ct_ms,
+            latency_updated_at: r.latency_updated_at,
         }
     }
 }
@@ -298,13 +396,38 @@ struct CreateTokenReq {
 
 // ── REST 处理函数 ─────────────────────────────────────────────────────────────
 
+async fn get_node(
+    State(s): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<NodeResponse>, StatusCode> {
+    let id: i64 = id.parse().map_err(|_| StatusCode::BAD_REQUEST)?;
+    let row = sqlx::query_as::<_, NodeRow>(
+        "SELECT id, hostname, ip, os, arch, last_seen, expires_at, price, price_currency, website_url, latency_test_enabled, latency_cu_ms, latency_cm_ms, latency_ct_ms, latency_updated_at FROM nodes WHERE id = $1",
+    )
+    .bind(id)
+    .fetch_optional(&s.db)
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+    .ok_or(StatusCode::NOT_FOUND)?;
+    Ok(Json(row.into()))
+}
+
+async fn sse_events(
+    State(s): State<AppState>,
+) -> Sse<impl tokio_stream::Stream<Item = Result<Event, Infallible>>> {
+    let rx = s.event_tx.subscribe();
+    let stream = BroadcastStream::new(rx)
+        .filter_map(|msg| msg.ok().map(|data| Ok(Event::default().data(data))));
+    Sse::new(stream).keep_alive(KeepAlive::default())
+}
+
 async fn healthz() -> &'static str {
     "ok"
 }
 
 async fn list_nodes(State(s): State<AppState>) -> Result<Json<Vec<NodeResponse>>, StatusCode> {
     let rows = sqlx::query_as::<_, NodeRow>(
-        "SELECT id, hostname, ip, os, arch, last_seen FROM nodes ORDER BY last_seen DESC",
+        "SELECT id, hostname, ip, os, arch, last_seen, expires_at, price, price_currency, website_url, latency_test_enabled, latency_cu_ms, latency_cm_ms, latency_ct_ms, latency_updated_at FROM nodes ORDER BY last_seen DESC",
     )
     .fetch_all(&s.db)
     .await
@@ -397,6 +520,174 @@ async fn delete_token(
     Ok(StatusCode::NO_CONTENT)
 }
 
+/// 管理员专用：返回含 IP、价格、到期时间、延迟开关的完整节点列表
+#[derive(Serialize)]
+struct AdminNodeResponse {
+    id: String,
+    hostname: String,
+    ip: String,
+    os: String,
+    arch: String,
+    last_seen: DateTime<Utc>,
+    expires_at: Option<DateTime<Utc>>,
+    price: Option<f32>,
+    price_currency: Option<String>,
+    website_url: Option<String>,
+    latency_test_enabled: bool,
+    latency_cu_ms: Option<f32>,
+    latency_cm_ms: Option<f32>,
+    latency_ct_ms: Option<f32>,
+    latency_updated_at: Option<DateTime<Utc>>,
+}
+
+impl From<NodeRow> for AdminNodeResponse {
+    fn from(r: NodeRow) -> Self {
+        Self {
+            id: r.id.to_string(),
+            hostname: r.hostname,
+            ip: r.ip,
+            os: r.os,
+            arch: r.arch,
+            last_seen: r.last_seen,
+            expires_at: r.expires_at,
+            price: r.price,
+            price_currency: r.price_currency,
+            website_url: r.website_url,
+            latency_test_enabled: r.latency_test_enabled.unwrap_or(false),
+            latency_cu_ms: r.latency_cu_ms,
+            latency_cm_ms: r.latency_cm_ms,
+            latency_ct_ms: r.latency_ct_ms,
+            latency_updated_at: r.latency_updated_at,
+        }
+    }
+}
+
+async fn admin_list_nodes(
+    State(s): State<AppState>,
+) -> Result<Json<Vec<AdminNodeResponse>>, StatusCode> {
+    let rows = sqlx::query_as::<_, NodeRow>(
+        "SELECT id, hostname, ip, os, arch, last_seen, expires_at, price, price_currency, website_url, latency_test_enabled, latency_cu_ms, latency_cm_ms, latency_ct_ms, latency_updated_at FROM nodes ORDER BY last_seen DESC",
+    )
+    .fetch_all(&s.db)
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(Json(rows.into_iter().map(Into::into).collect()))
+}
+
+#[derive(Deserialize)]
+struct UpdateNodeMetaReq {
+    expires_at: Option<DateTime<Utc>>,
+    price: Option<f32>,
+    price_currency: Option<String>,
+    website_url: Option<String>,
+    latency_test_enabled: Option<bool>,
+}
+
+async fn update_node_meta(
+    State(s): State<AppState>,
+    Path(id): Path<String>,
+    Json(req): Json<UpdateNodeMetaReq>,
+) -> Result<StatusCode, StatusCode> {
+    let id: i64 = id.parse().map_err(|_| StatusCode::BAD_REQUEST)?;
+    sqlx::query(
+        "UPDATE nodes SET expires_at = $1, price = $2, price_currency = $3, website_url = $4, latency_test_enabled = COALESCE($5, latency_test_enabled) WHERE id = $6",
+    )
+    .bind(req.expires_at)
+    .bind(req.price)
+    .bind(req.price_currency)
+    .bind(req.website_url)
+    .bind(req.latency_test_enabled)
+    .bind(id)
+    .execute(&s.db)
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+// ── 管理统计 ──────────────────────────────────────────────────────────────────
+
+#[derive(Serialize)]
+struct AdminStats {
+    db_size_bytes: i64,
+    db_size_pretty: String,
+    nodes_count: i64,
+    metrics_count: i64,
+    tokens_count: i64,
+    daily_metrics: Vec<DailyCount>,
+}
+
+#[derive(Serialize)]
+struct DailyCount {
+    day: String,
+    count: i64,
+}
+
+async fn admin_stats(State(s): State<AppState>) -> Result<Json<AdminStats>, StatusCode> {
+    let db_size_bytes: i64 = sqlx::query_scalar("SELECT pg_database_size(current_database())")
+        .fetch_one(&s.db)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    let db_size_pretty: String =
+        sqlx::query_scalar("SELECT pg_size_pretty(pg_database_size(current_database()))")
+            .fetch_one(&s.db)
+            .await
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    // 近似行数，避免全表 COUNT 阻塞
+    let nodes_count: i64 = sqlx::query_scalar(
+        "SELECT GREATEST(reltuples::bigint, 0) FROM pg_class WHERE relname = 'nodes'",
+    )
+    .fetch_one(&s.db)
+    .await
+    .unwrap_or(0);
+
+    let metrics_count: i64 = sqlx::query_scalar(
+        "SELECT GREATEST(reltuples::bigint, 0) FROM pg_class WHERE relname = 'metrics'",
+    )
+    .fetch_one(&s.db)
+    .await
+    .unwrap_or(0);
+
+    let tokens_count: i64 = sqlx::query_scalar("SELECT count(*) FROM tokens")
+        .fetch_one(&s.db)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    #[derive(sqlx::FromRow)]
+    struct DailyRow {
+        day: chrono::NaiveDate,
+        count: i64,
+    }
+
+    let rows = sqlx::query_as::<_, DailyRow>(
+        "SELECT (reported_at AT TIME ZONE 'UTC')::date AS day, count(*)::bigint AS count
+         FROM metrics
+         WHERE reported_at >= NOW() - INTERVAL '14 days'
+         GROUP BY 1 ORDER BY 1",
+    )
+    .fetch_all(&s.db)
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    let daily_metrics = rows
+        .into_iter()
+        .map(|r| DailyCount {
+            day: r.day.format("%m-%d").to_string(),
+            count: r.count,
+        })
+        .collect();
+
+    Ok(Json(AdminStats {
+        db_size_bytes,
+        db_size_pretty,
+        nodes_count,
+        metrics_count,
+        tokens_count,
+        daily_metrics,
+    }))
+}
+
 // ── Schema ───────────────────────────────────────────────────────────────────
 
 async fn init_schema(pool: &PgPool) -> Result<()> {
@@ -437,6 +728,36 @@ async fn init_schema(pool: &PgPool) -> Result<()> {
     )
     .execute(pool)
     .await?;
+
+    sqlx::query("ALTER TABLE nodes ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ")
+        .execute(pool)
+        .await?;
+    sqlx::query("ALTER TABLE nodes ADD COLUMN IF NOT EXISTS price REAL")
+        .execute(pool)
+        .await?;
+    sqlx::query("ALTER TABLE nodes ADD COLUMN IF NOT EXISTS price_currency TEXT DEFAULT 'CNY'")
+        .execute(pool)
+        .await?;
+    sqlx::query("ALTER TABLE nodes ADD COLUMN IF NOT EXISTS website_url TEXT")
+        .execute(pool)
+        .await?;
+    sqlx::query(
+        "ALTER TABLE nodes ADD COLUMN IF NOT EXISTS latency_test_enabled BOOLEAN DEFAULT FALSE",
+    )
+    .execute(pool)
+    .await?;
+    sqlx::query("ALTER TABLE nodes ADD COLUMN IF NOT EXISTS latency_cu_ms REAL")
+        .execute(pool)
+        .await?;
+    sqlx::query("ALTER TABLE nodes ADD COLUMN IF NOT EXISTS latency_cm_ms REAL")
+        .execute(pool)
+        .await?;
+    sqlx::query("ALTER TABLE nodes ADD COLUMN IF NOT EXISTS latency_ct_ms REAL")
+        .execute(pool)
+        .await?;
+    sqlx::query("ALTER TABLE nodes ADD COLUMN IF NOT EXISTS latency_updated_at TIMESTAMPTZ")
+        .execute(pool)
+        .await?;
 
     // 创建 tokens 表，用于存储 agent 注册 token
     sqlx::query(
@@ -479,18 +800,37 @@ async fn main() -> Result<()> {
         let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(3600));
         loop {
             interval.tick().await;
-            match sqlx::query(
-                "DELETE FROM metrics WHERE reported_at < NOW() - ($1 || ' days')::INTERVAL",
-            )
-            .bind(retention_days)
-            .execute(&retention_pool)
-            .await
-            {
-                Ok(r) if r.rows_affected() > 0 => {
-                    info!("retention: deleted {} rows", r.rows_affected());
+            // 分批删除：每批至多 1 万行，避免一次性删除导致长时间锁表、阻塞上报写入
+            let mut total: u64 = 0;
+            loop {
+                let res = sqlx::query(
+                    "DELETE FROM metrics WHERE id IN (
+                         SELECT id FROM metrics
+                         WHERE reported_at < NOW() - ($1 || ' days')::INTERVAL
+                         LIMIT 10000
+                     )",
+                )
+                .bind(retention_days)
+                .execute(&retention_pool)
+                .await;
+                match res {
+                    Ok(r) => {
+                        let n = r.rows_affected();
+                        total += n;
+                        if n < 10000 {
+                            break; // 已无更多过期数据
+                        }
+                        // 批间短暂让出，避免持续占用写锁
+                        tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
+                    }
+                    Err(e) => {
+                        tracing::warn!("retention cleanup failed: {e}");
+                        break;
+                    }
                 }
-                Err(e) => tracing::warn!("retention cleanup failed: {e}"),
-                _ => {}
+            }
+            if total > 0 {
+                info!("retention: deleted {} rows", total);
             }
         }
     });
@@ -500,6 +840,7 @@ async fn main() -> Result<()> {
         let set = load_token_set(&pool).await?;
         Arc::new(std::sync::RwLock::new(set))
     };
+    let (event_tx, _) = broadcast::channel::<String>(64);
 
     // gRPC 拦截器：同时接受 global_token 和 DB token
     let global_token = cli.token.clone();
@@ -507,6 +848,7 @@ async fn main() -> Result<()> {
     let svc = MonitorService {
         db: pool.clone(),
         id_gen: id_gen.clone(),
+        event_tx: event_tx.clone(),
     };
     let monitor = MonitorServer::with_interceptor(svc, move |req: Request<()>| {
         match req.metadata().get("authorization") {
@@ -529,14 +871,20 @@ async fn main() -> Result<()> {
 
     let app = Router::new()
         .route("/healthz", get(healthz))
+        .route("/api/events", get(sse_events))
         .route("/api/nodes", get(list_nodes))
+        .route("/api/nodes/{id}", get(get_node))
         .route("/api/nodes/{id}/metrics", get(node_metrics))
         .route("/api/tokens", get(list_tokens).post(create_token))
         .route("/api/tokens/{id}", axum::routing::delete(delete_token))
+        .route("/api/admin/nodes", get(admin_list_nodes))
+        .route("/api/admin/nodes/{id}", put(update_node_meta))
+        .route("/api/admin/stats", get(admin_stats))
         .with_state(AppState {
             db: pool,
             id_gen,
             token_set,
+            event_tx,
         })
         .layer(CorsLayer::permissive())
         .fallback_service(grpc_router);

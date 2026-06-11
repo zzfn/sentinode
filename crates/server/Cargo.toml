@@ -16,8 +16,10 @@ clap = { version = "4.6.1", features = ["derive", "env"] }
 common = { path = "../common" }
 prost = "0.14.4"
 serde = { version = "1", features = ["derive"] }
+serde_json = "1.0.150"
 sqlx = { version = "0.8", features = ["runtime-tokio-native-tls", "postgres", "chrono"] }
 tokio = { version = "1.52.3", features = ["full"] }
+tokio-stream = { version = "0.1.18", features = ["sync"] }
 tonic = "0.14.6"
 tower-http = { version = "0.6", features = ["cors"] }
 tracing = "0.1.44"

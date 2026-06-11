@@ -1,7 +1,7 @@
 use anyhow::Result;
 use clap::Parser;
 use common::monitor_client::MonitorClient;
-use common::{DiskStat, Metrics, NetStat, NodeInfo, ReportRequest};
+use common::{DiskStat, LatencyResult, Metrics, NetStat, NodeInfo, ReportRequest};
 use local_ip_address::local_ip;
 use std::time::Duration;
 use sysinfo::{Disks, Networks, System};
@@ -9,6 +9,42 @@ use tonic::metadata::MetadataValue;
 use tonic::transport::{Channel, ClientTlsConfig};
 use tonic::Request;
 use tracing::{error, info, warn};
+
+const LATENCY_TARGETS: &[(&str, &str)] = &[
+    ("cu", "sh-cu-v4.ip.zstaticcdn.com:80"),
+    ("cm", "sh-cm-v4.ip.zstaticcdn.com:80"),
+    ("ct", "sh-ct-v4.ip.zstaticcdn.com:80"),
+];
+
+async fn tcp_ping(addr: &str) -> f32 {
+    let start = tokio::time::Instant::now();
+    match tokio::time::timeout(Duration::from_secs(5), tokio::net::TcpStream::connect(addr)).await {
+        Ok(Ok(_)) => start.elapsed().as_secs_f32() * 1000.0,
+        _ => -1.0,
+    }
+}
+
+async fn measure_latencies() -> Vec<LatencyResult> {
+    let (cu, cm, ct) = tokio::join!(
+        tcp_ping(LATENCY_TARGETS[0].1),
+        tcp_ping(LATENCY_TARGETS[1].1),
+        tcp_ping(LATENCY_TARGETS[2].1),
+    );
+    vec![
+        LatencyResult {
+            isp: "cu".into(),
+            latency_ms: cu,
+        },
+        LatencyResult {
+            isp: "cm".into(),
+            latency_ms: cm,
+        },
+        LatencyResult {
+            isp: "ct".into(),
+            latency_ms: ct,
+        },
+    ]
+}
 
 #[derive(Parser)]
 #[command(name = "sentinode-agent")]
@@ -62,9 +98,10 @@ async fn main() -> Result<()> {
     info!("agent started: {} ({}) → {}", hostname, ip, cli.server);
 
     let mut sys = System::new();
+    let mut latency_enabled = false;
+    let mut pending_latencies: Vec<LatencyResult> = vec![];
 
     loop {
-        // CPU 需要两次采样才能得到准确使用率
         sys.refresh_cpu_usage();
         tokio::time::sleep(sysinfo::MINIMUM_CPU_UPDATE_INTERVAL).await;
         sys.refresh_cpu_usage();
@@ -116,13 +153,19 @@ async fn main() -> Result<()> {
                 networks,
             }),
             timestamp: ts,
+            latencies: std::mem::take(&mut pending_latencies),
         };
 
         // 指数退避重试，最多 3 次（2s → 4s → 放弃）
         'retry: for attempt in 0..3u32 {
             match client.report(req.clone()).await {
                 Ok(r) => {
-                    info!("reported ok={}", r.into_inner().ok);
+                    let resp = r.into_inner();
+                    info!(
+                        "reported ok={} latency_test_enabled={}",
+                        resp.ok, resp.latency_test_enabled
+                    );
+                    latency_enabled = resp.latency_test_enabled;
                     break 'retry;
                 }
                 Err(e) => {
@@ -138,6 +181,17 @@ async fn main() -> Result<()> {
                     }
                 }
             }
+        }
+
+        // 若已启用延迟测试，并发 TCP ping 三网，结果随下次 report 上报
+        if latency_enabled {
+            pending_latencies = measure_latencies().await;
+            info!(
+                "latency: cu={:.1}ms cm={:.1}ms ct={:.1}ms",
+                pending_latencies[0].latency_ms,
+                pending_latencies[1].latency_ms,
+                pending_latencies[2].latency_ms,
+            );
         }
 
         tokio::time::sleep(Duration::from_secs(cli.interval)).await;

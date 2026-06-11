@@ -19,6 +19,7 @@
   --color-input: hsl(214.3 31.8% 91.4%);
   --color-ring: hsl(221.2 83.2% 53.3%);
   --color-success: hsl(142 71% 45%);
+  --color-warning: hsl(38 92% 50%);
   --radius: 0.5rem;
 }
 

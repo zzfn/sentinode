@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link } from "wouter";
-import { fetchNodes, type Node } from "../api";
+import { fetchNodes, subscribeNodes, type Node } from "../api";
 import { Alert, AlertDescription } from "../components/ui/alert";
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
@@ -20,11 +20,10 @@ import {
   TableRow,
 } from "../components/ui/table";
 
-/** 判断节点是否在线：last_seen 距现在不超过 2 分钟 */
 function isOnline(lastSeen: string): boolean {
-  const diff = Date.now() - new Date(lastSeen).getTime();
-  return diff < 2 * 60 * 1000;
+  return Date.now() - new Date(lastSeen).getTime() < 2 * 60 * 1000;
 }
+
 
 export default function Dashboard() {
   const [nodes, setNodes] = useState<Node[]>([]);
@@ -33,23 +32,29 @@ export default function Dashboard() {
 
   useEffect(() => {
     let cancelled = false;
-    const load = () =>
-      fetchNodes()
-        .then((data) => {
-          if (!cancelled) setNodes(data);
-        })
-        .catch((e) => {
-          if (!cancelled) setError(e instanceof Error ? e.message : String(e));
-        })
-        .finally(() => {
-          if (!cancelled) setLoading(false);
-        });
 
-    load();
-    const timer = setInterval(load, 15_000);
+    // 首次加载全量数据
+    fetchNodes()
+      .then((data) => { if (!cancelled) setNodes(data); })
+      .catch((e) => { if (!cancelled) setError(e instanceof Error ? e.message : String(e)); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+
+    // SSE 增量更新
+    const unsub = subscribeNodes((updated) => {
+      if (cancelled) return;
+      setNodes((prev) => {
+        const idx = prev.findIndex((n) => n.id === updated.id);
+        if (idx === -1) return [updated, ...prev];
+        const next = [...prev];
+        next[idx] = updated;
+        return next;
+      });
+      setLoading(false);
+    });
+
     return () => {
       cancelled = true;
-      clearInterval(timer);
+      unsub();
     };
   }, []);
 
@@ -86,7 +91,7 @@ export default function Dashboard() {
             <CardHeader>
               <CardTitle>节点列表</CardTitle>
               <CardDescription>
-                共 {nodes.length} 个节点，每 15 秒自动刷新
+                共 {nodes.length} 个节点，实时更新
               </CardDescription>
             </CardHeader>
             <CardContent>
@@ -100,9 +105,10 @@ export default function Dashboard() {
                     <TableRow>
                       <TableHead className="w-20">状态</TableHead>
                       <TableHead>主机名</TableHead>
-                      <TableHead>IP</TableHead>
+                      <TableHead className="text-center">上海联通</TableHead>
+                      <TableHead className="text-center">上海移动</TableHead>
+                      <TableHead className="text-center">上海电信</TableHead>
                       <TableHead>系统</TableHead>
-                      <TableHead>架构</TableHead>
                       <TableHead>最后上报</TableHead>
                     </TableRow>
                   </TableHeader>
@@ -117,20 +123,42 @@ export default function Dashboard() {
                             </Badge>
                           </TableCell>
                           <TableCell>
-                            <Link
-                              href={`/nodes/${n.id}`}
-                              className="font-medium text-[var(--color-primary)] hover:underline"
-                            >
-                              {n.hostname}
-                            </Link>
+                            <div className="flex items-center gap-1.5">
+                              <Link
+                                href={`/nodes/${n.id}`}
+                                className="font-medium text-[var(--color-primary)] hover:underline"
+                              >
+                                {n.hostname}
+                              </Link>
+                              {n.website_url && (
+                                <a
+                                  href={n.website_url}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)] transition-colors"
+                                  title="官网"
+                                >
+                                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                    <path strokeLinecap="round" strokeLinejoin="round" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                                  </svg>
+                                </a>
+                              )}
+                            </div>
                           </TableCell>
-                          <TableCell className="font-mono text-sm">
-                            {n.ip}
-                          </TableCell>
+                          {[n.latency_cu_ms, n.latency_cm_ms, n.latency_ct_ms].map((ms, i) => (
+                            <TableCell key={i} className="text-center tabular-nums text-sm">
+                              {ms == null ? (
+                                <span className="text-[var(--color-muted-foreground)]">—</span>
+                              ) : ms < 0 ? (
+                                <span className="text-[var(--color-destructive)]">超时</span>
+                              ) : (
+                                <span className={ms < 80 ? "text-[var(--color-success)]" : ms < 150 ? "text-[var(--color-warning)]" : "text-[var(--color-destructive)]"}>
+                                  {ms.toFixed(0)}ms
+                                </span>
+                              )}
+                            </TableCell>
+                          ))}
                           <TableCell className="text-sm">{n.os}</TableCell>
-                          <TableCell>
-                            <Badge variant="secondary">{n.arch}</Badge>
-                          </TableCell>
                           <TableCell className="text-xs text-[var(--color-muted-foreground)] whitespace-nowrap">
                             {new Date(n.last_seen).toLocaleString("zh-CN")}
                           </TableCell>

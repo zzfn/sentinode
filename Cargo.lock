@@ -2090,8 +2090,10 @@ dependencies = [
  "common",
  "prost",
  "serde",
+ "serde_json",
  "sqlx",
  "tokio",
+ "tokio-stream",
  "tonic",
  "tower-http",
  "tracing",
@@ -2579,6 +2581,7 @@ dependencies = [
  "futures-core",
  "pin-project-lite",
  "tokio",
+ "tokio-util",
 ]
 
 [[package]]

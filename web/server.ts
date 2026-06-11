@@ -62,10 +62,12 @@ const server = Bun.serve({
       }
     }
 
-    // 静态资源：JS / CSS / 图片等
+    // 静态资源：先查构建产物目录，再回退到项目根目录（favicon 等源文件）
     if (path !== "/" && path.includes(".")) {
-      const file = Bun.file(`${OUTDIR}${path}`);
-      if (await file.exists()) return new Response(file);
+      const distFile = Bun.file(`${OUTDIR}${path}`);
+      if (await distFile.exists()) return new Response(distFile);
+      const rootFile = Bun.file(`.${path}`);
+      if (await rootFile.exists()) return new Response(rootFile);
     }
 
     // SPA fallback
