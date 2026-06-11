@@ -157,16 +157,16 @@ function AddAgentDialog({
   const [creating, setCreating] = useState(false);
   const [copied, setCopied] = useState(false);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const existingIdsRef = useRef<Set<string>>(new Set());
+  const openedAtRef = useRef<number>(0);
 
   useEffect(() => {
     if (!open) {
       if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
       return;
     }
+    openedAtRef.current = Date.now();
     setStep("name"); setName(""); setScript(""); setConnectedHostname("");
     setError(null); setCreating(false); setCopied(false);
-    fetchNodes().then((nodes) => { existingIdsRef.current = new Set(nodes.map((n) => n.id)); }).catch(() => {});
   }, [open]);
 
   useEffect(() => { return () => { if (pollRef.current) clearInterval(pollRef.current); }; }, []);
@@ -180,13 +180,14 @@ function AddAgentDialog({
       onTokenCreated(tok);
       setScript(buildScript(serverUrl, tok.token));
       setStep("script");
+      const startedAt = openedAtRef.current;
       pollRef.current = setInterval(async () => {
         try {
           const nodes = await fetchNodes();
-          const newNode = nodes.find((n) => !existingIdsRef.current.has(n.id));
-          if (newNode) {
+          const connectedNode = nodes.find((n) => new Date(n.last_seen).getTime() > startedAt);
+          if (connectedNode) {
             clearInterval(pollRef.current!); pollRef.current = null;
-            setConnectedHostname(newNode.hostname); setStep("success");
+            setConnectedHostname(connectedNode.hostname); setStep("success");
           }
         } catch {}
       }, 3000);
