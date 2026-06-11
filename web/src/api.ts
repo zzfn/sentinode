@@ -22,6 +22,9 @@ export interface AdminNode extends Node {
   price: number | null;
   price_currency: string | null;
   latency_test_enabled: boolean;
+  token_id: string | null;
+  token_name: string | null;
+  token: string | null;
 }
 
 // ── 汇率换算 ──────────────────────────────────────────────────────────────────
@@ -86,10 +89,9 @@ export function fmtUptime(secs: number): string {
   return `${m}m`;
 }
 
-export async function fetchNodes(): Promise<Node[]> {
-  const r = await fetch(`${BASE}/nodes`);
+export async function deleteNode(id: string): Promise<void> {
+  const r = await fetch(`${BASE}/admin/nodes/${id}`, { method: "DELETE" });
   if (!r.ok) throw new Error(`HTTP ${r.status}`);
-  return r.json();
 }
 
 export async function fetchNode(id: string): Promise<Node> {

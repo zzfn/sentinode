@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link } from "wouter";
-import { fetchNodes, subscribeNodes, type Node } from "../api";
+import { subscribeNodes, type Node } from "../api";
 import { Alert, AlertDescription } from "../components/ui/alert";
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
@@ -32,26 +32,18 @@ export default function Dashboard() {
 
   useEffect(() => {
     let cancelled = false;
-
-    // 首次加载全量数据
-    fetchNodes()
-      .then((data) => { if (!cancelled) setNodes(data); })
-      .catch((e) => { if (!cancelled) setError(e instanceof Error ? e.message : String(e)); })
-      .finally(() => { if (!cancelled) setLoading(false); });
-
-    // SSE 增量更新
+    // SSE 连接后 server 先推送全量快照，再推送增量更新
     const unsub = subscribeNodes((updated) => {
       if (cancelled) return;
       setNodes((prev) => {
         const idx = prev.findIndex((n) => n.id === updated.id);
-        if (idx === -1) return [updated, ...prev];
+        if (idx === -1) return [...prev, updated];
         const next = [...prev];
         next[idx] = updated;
         return next;
       });
       setLoading(false);
     });
-
     return () => {
       cancelled = true;
       unsub();

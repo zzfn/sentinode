@@ -115,6 +115,14 @@ impl Monitor for MonitorService {
         &self,
         request: Request<ReportRequest>,
     ) -> Result<Response<ReportResponse>, Status> {
+        // 取 token 值用于关联节点
+        let token_val: Option<String> = request
+            .metadata()
+            .get("authorization")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.strip_prefix("Bearer "))
+            .map(|s| s.to_owned());
+
         let req = request.into_inner();
         let node = req
             .node
@@ -123,11 +131,24 @@ impl Monitor for MonitorService {
             .metrics
             .ok_or_else(|| Status::invalid_argument("missing metrics"))?;
 
+        // 查 token_id（global token 直接连的不会有 token_id）
+        let token_id: Option<i64> = if let Some(ref tok) = token_val {
+            sqlx::query_scalar("SELECT id FROM tokens WHERE token = $1")
+                .bind(tok)
+                .fetch_optional(&self.db)
+                .await
+                .unwrap_or(None)
+        } else {
+            None
+        };
+
         let node_id: i64 = sqlx::query(
-            "INSERT INTO nodes (id, hostname, ip, os, arch, last_seen)
-             VALUES ($1, $2, $3, $4, $5, NOW())
+            "INSERT INTO nodes (id, hostname, ip, os, arch, last_seen, token_id)
+             VALUES ($1, $2, $3, $4, $5, NOW(), $6)
              ON CONFLICT (hostname) DO UPDATE
-             SET ip = EXCLUDED.ip, os = EXCLUDED.os, arch = EXCLUDED.arch, last_seen = NOW()
+             SET ip = EXCLUDED.ip, os = EXCLUDED.os, arch = EXCLUDED.arch,
+                 last_seen = NOW(),
+                 token_id = COALESCE(EXCLUDED.token_id, nodes.token_id)
              RETURNING id",
         )
         .bind(self.next_id())
@@ -135,6 +156,7 @@ impl Monitor for MonitorService {
         .bind(&node.ip)
         .bind(&node.os)
         .bind(&node.arch)
+        .bind(token_id)
         .fetch_one(&self.db)
         .await
         .map_err(|e| Status::internal(e.to_string()))?
@@ -274,6 +296,9 @@ struct NodeRow {
     latency_cm_ms: Option<f32>,
     latency_ct_ms: Option<f32>,
     latency_updated_at: Option<DateTime<Utc>>,
+    token_id: Option<i64>,
+    token_name: Option<String>,
+    token_value: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -407,7 +432,7 @@ async fn get_node(
 ) -> Result<Json<NodeResponse>, StatusCode> {
     let id: i64 = id.parse().map_err(|_| StatusCode::BAD_REQUEST)?;
     let row = sqlx::query_as::<_, NodeRow>(
-        "SELECT id, hostname, ip, os, arch, last_seen, expires_at, price, price_currency, website_url, latency_test_enabled, latency_cu_ms, latency_cm_ms, latency_ct_ms, latency_updated_at FROM nodes WHERE id = $1",
+        "SELECT id, hostname, ip, os, arch, last_seen, expires_at, price, price_currency, website_url, latency_test_enabled, latency_cu_ms, latency_cm_ms, latency_ct_ms, latency_updated_at, NULL::BIGINT AS token_id, NULL::TEXT AS token_name, NULL::TEXT AS token_value FROM nodes WHERE id = $1",
     )
     .bind(id)
     .fetch_optional(&s.db)
@@ -421,24 +446,38 @@ async fn sse_events(
     State(s): State<AppState>,
 ) -> Sse<impl tokio_stream::Stream<Item = Result<Event, Infallible>>> {
     let rx = s.event_tx.subscribe();
-    let stream = BroadcastStream::new(rx)
+
+    // 建立连接时先推送当前所有节点快照
+    let snapshot: Vec<String> = sqlx::query_as::<_, NodeRow>(
+        "SELECT n.id, n.hostname, n.ip, n.os, n.arch, n.last_seen, n.expires_at,
+                n.price, n.price_currency, n.website_url, n.latency_test_enabled,
+                n.latency_cu_ms, n.latency_cm_ms, n.latency_ct_ms, n.latency_updated_at,
+                n.token_id, NULL::TEXT AS token_name, NULL::TEXT AS token_value
+         FROM nodes n ORDER BY n.last_seen DESC",
+    )
+    .fetch_all(&s.db)
+    .await
+    .unwrap_or_default()
+    .into_iter()
+    .filter_map(|row| {
+        let resp: NodeResponse = row.into();
+        serde_json::to_string(&json!({ "type": "node_updated", "data": resp })).ok()
+    })
+    .collect();
+
+    let snapshot_stream = tokio_stream::iter(
+        snapshot
+            .into_iter()
+            .map(|data| Ok(Event::default().data(data))),
+    );
+    let live_stream = BroadcastStream::new(rx)
         .filter_map(|msg| msg.ok().map(|data| Ok(Event::default().data(data))));
-    Sse::new(stream).keep_alive(KeepAlive::default())
+
+    Sse::new(snapshot_stream.chain(live_stream)).keep_alive(KeepAlive::default())
 }
 
 async fn healthz() -> &'static str {
     "ok"
-}
-
-async fn list_nodes(State(s): State<AppState>) -> Result<Json<Vec<NodeResponse>>, StatusCode> {
-    let rows = sqlx::query_as::<_, NodeRow>(
-        "SELECT id, hostname, ip, os, arch, last_seen, expires_at, price, price_currency, website_url, latency_test_enabled, latency_cu_ms, latency_cm_ms, latency_ct_ms, latency_updated_at FROM nodes ORDER BY last_seen DESC",
-    )
-    .fetch_all(&s.db)
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-
-    Ok(Json(rows.into_iter().map(Into::into).collect()))
 }
 
 async fn node_metrics(
@@ -543,6 +582,9 @@ struct AdminNodeResponse {
     latency_cm_ms: Option<f32>,
     latency_ct_ms: Option<f32>,
     latency_updated_at: Option<DateTime<Utc>>,
+    token_id: Option<String>,
+    token_name: Option<String>,
+    token: Option<String>,
 }
 
 impl From<NodeRow> for AdminNodeResponse {
@@ -563,6 +605,9 @@ impl From<NodeRow> for AdminNodeResponse {
             latency_cm_ms: r.latency_cm_ms,
             latency_ct_ms: r.latency_ct_ms,
             latency_updated_at: r.latency_updated_at,
+            token_id: r.token_id.map(|id| id.to_string()),
+            token_name: r.token_name,
+            token: r.token_value,
         }
     }
 }
@@ -571,12 +616,36 @@ async fn admin_list_nodes(
     State(s): State<AppState>,
 ) -> Result<Json<Vec<AdminNodeResponse>>, StatusCode> {
     let rows = sqlx::query_as::<_, NodeRow>(
-        "SELECT id, hostname, ip, os, arch, last_seen, expires_at, price, price_currency, website_url, latency_test_enabled, latency_cu_ms, latency_cm_ms, latency_ct_ms, latency_updated_at FROM nodes ORDER BY last_seen DESC",
+        "SELECT n.id, n.hostname, n.ip, n.os, n.arch, n.last_seen, n.expires_at,
+                n.price, n.price_currency, n.website_url, n.latency_test_enabled,
+                n.latency_cu_ms, n.latency_cm_ms, n.latency_ct_ms, n.latency_updated_at,
+                n.token_id, t.name AS token_name, t.token AS token_value
+         FROM nodes n
+         LEFT JOIN tokens t ON t.id = n.token_id
+         ORDER BY n.last_seen DESC",
     )
     .fetch_all(&s.db)
     .await
     .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(Json(rows.into_iter().map(Into::into).collect()))
+}
+
+async fn delete_node(
+    State(s): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<StatusCode, StatusCode> {
+    let id: i64 = id.parse().map_err(|_| StatusCode::BAD_REQUEST)?;
+    sqlx::query("DELETE FROM metrics WHERE node_id = $1")
+        .bind(id)
+        .execute(&s.db)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    sqlx::query("DELETE FROM nodes WHERE id = $1")
+        .bind(id)
+        .execute(&s.db)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 #[derive(Deserialize)]
@@ -785,6 +854,13 @@ async fn init_schema(pool: &PgPool) -> Result<()> {
     .execute(pool)
     .await?;
 
+    // tokens 表创建后才能添加外键引用
+    sqlx::query(
+        "ALTER TABLE nodes ADD COLUMN IF NOT EXISTS token_id BIGINT REFERENCES tokens(id) ON DELETE SET NULL",
+    )
+    .execute(pool)
+    .await?;
+
     Ok(())
 }
 
@@ -888,7 +964,6 @@ async fn main() -> Result<()> {
     let app = Router::new()
         .route("/healthz", get(healthz))
         .route("/api/events", get(sse_events))
-        .route("/api/nodes", get(list_nodes))
         .route("/api/nodes/{id}", get(get_node))
         .route("/api/nodes/{id}/metrics", get(node_metrics))
         .route("/api/admin/tokens", get(list_tokens).post(create_token))
@@ -897,7 +972,10 @@ async fn main() -> Result<()> {
             axum::routing::delete(delete_token),
         )
         .route("/api/admin/nodes", get(admin_list_nodes))
-        .route("/api/admin/nodes/{id}", put(update_node_meta))
+        .route(
+            "/api/admin/nodes/{id}",
+            put(update_node_meta).delete(delete_node),
+        )
         .route(
             "/api/admin/nodes/{id}/upgrade",
             axum::routing::post(trigger_upgrade),

@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Link } from "wouter";
 import {
   AdminNode, AdminStats, AgentToken, SERVER_URL,
-  createToken, deleteToken, fetchAdminNodes, fetchAdminStats, fetchNodes, fetchTokens,
+  createToken, deleteNode, deleteToken, fetchAdminNodes, fetchAdminStats, fetchTokens,
   toCNY, toggleLatencyTest, triggerUpgrade, updateNodeMeta,
 } from "../api";
 import { Alert, AlertDescription } from "../components/ui/alert";
@@ -137,6 +137,61 @@ function EditNodeDialog({
   );
 }
 
+// ── 重装 Agent 弹窗 ───────────────────────────────────────────────────────────
+
+function ReinstallDialog({
+  node, serverUrl, onClose,
+}: {
+  node: AdminNode | null;
+  serverUrl: string;
+  onClose: () => void;
+}) {
+  const [copied, setCopied] = useState(false);
+
+  if (!node) return null;
+
+  const script = node.token ? buildScript(serverUrl, node.token) : "";
+
+  async function handleCopy() {
+    try {
+      await navigator.clipboard.writeText(script);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {}
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+      <div className="absolute inset-0 bg-black/50" onClick={onClose} />
+      <div className="relative bg-background rounded-lg shadow-xl w-full max-w-lg p-6 space-y-4">
+        <h2 className="text-lg font-semibold">重装 Agent — {node.hostname}</h2>
+        {!node.token ? (
+          <p className="text-sm text-[var(--color-muted-foreground)]">该节点未绑定 Token，请先通过"添加 Agent"创建并安装。</p>
+        ) : (
+          <div className="space-y-2">
+            <div className="text-sm text-[var(--color-muted-foreground)]">Token：{node.token_name}</div>
+            <Label>安装命令（在目标节点执行）</Label>
+            <div className="relative">
+              <pre className="bg-muted rounded p-3 text-xs overflow-x-auto whitespace-pre-wrap break-all pr-16">{script}</pre>
+              <Button
+                variant={copied ? "default" : "outline"}
+                size="sm"
+                className="absolute top-2 right-2"
+                onClick={handleCopy}
+              >
+                {copied ? "已复制" : "复制"}
+              </Button>
+            </div>
+          </div>
+        )}
+        <div className="flex justify-end">
+          <Button variant="outline" onClick={onClose}>关闭</Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── 添加 Agent 弹窗 ───────────────────────────────────────────────────────────
 
 type DialogStep = "name" | "script" | "success";
@@ -183,7 +238,7 @@ function AddAgentDialog({
       const startedAt = openedAtRef.current;
       pollRef.current = setInterval(async () => {
         try {
-          const nodes = await fetchNodes();
+          const nodes = await fetchAdminNodes();
           const connectedNode = nodes.find((n) => new Date(n.last_seen).getTime() > startedAt);
           if (connectedNode) {
             clearInterval(pollRef.current!); pollRef.current = null;
@@ -404,6 +459,7 @@ export default function Admin() {
   const [tokens, setTokens] = useState<AgentToken[]>([]);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editNode, setEditNode] = useState<AdminNode | null>(null);
+  const [reinstallNode, setReinstallNode] = useState<AdminNode | null>(null);
   const [nodeCnyPrices, setNodeCnyPrices] = useState<Record<string, number | null>>({});
   const [upgradingIds, setUpgradingIds] = useState<Set<string>>(new Set());
   const [error, setError] = useState<string | null>(null);
@@ -454,11 +510,21 @@ export default function Admin() {
     setTimeout(() => setUpgradingIds((prev) => { const s = new Set(prev); s.delete(id); return s; }), 30_000);
   }
 
-  async function handleDelete(id: string) {
+  async function handleDeleteToken(id: string) {
     setError(null);
     try {
       await deleteToken(id);
       setTokens((prev) => prev.filter((t) => t.id !== id));
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  }
+
+  async function handleDeleteNode(id: string) {
+    setError(null);
+    try {
+      await deleteNode(id);
+      setNodes((prev) => prev.filter((n) => n.id !== id));
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : String(e));
     }
@@ -597,8 +663,9 @@ export default function Admin() {
                                 />
                               </TableCell>
                               <TableCell>
-                                <div className="flex gap-1.5">
+                                <div className="flex gap-1.5 flex-wrap">
                                   <Button variant="outline" size="sm" onClick={() => setEditNode(n)}>编辑</Button>
+                                  <Button variant="outline" size="sm" onClick={() => setReinstallNode(n)}>重装</Button>
                                   <Button
                                     variant="outline"
                                     size="sm"
@@ -606,6 +673,14 @@ export default function Admin() {
                                     onClick={() => handleUpgrade(n.id)}
                                   >
                                     {upgradingIds.has(n.id) ? "升级中…" : "升级"}
+                                  </Button>
+                                  <Button
+                                    variant="outline"
+                                    size="sm"
+                                    className="text-destructive hover:text-destructive"
+                                    onClick={() => { if (confirm(`确定删除节点 ${n.hostname}？`)) handleDeleteNode(n.id); }}
+                                  >
+                                    删除
                                   </Button>
                                 </div>
                               </TableCell>
@@ -618,44 +693,6 @@ export default function Admin() {
                 </CardContent>
               </Card>
 
-              <Card>
-                <CardHeader>
-                  <CardTitle>已注册 Agent</CardTitle>
-                  <CardDescription>共 {tokens.length} 个 Token</CardDescription>
-                </CardHeader>
-                <CardContent>
-                  {tokens.length === 0 ? (
-                    <p className="text-sm text-[var(--color-muted-foreground)] py-4 text-center">暂无已注册的 Agent，点击右上角添加</p>
-                  ) : (
-                    <Table>
-                      <TableHeader>
-                        <TableRow>
-                          <TableHead>名称</TableHead>
-                          <TableHead>Token</TableHead>
-                          <TableHead>注册时间</TableHead>
-                          <TableHead className="w-20">操作</TableHead>
-                        </TableRow>
-                      </TableHeader>
-                      <TableBody>
-                        {tokens.map((tok) => (
-                          <TableRow key={tok.id}>
-                            <TableCell className="font-medium">{tok.name}</TableCell>
-                            <TableCell>
-                              <code className="text-xs font-mono bg-muted px-1.5 py-0.5 rounded break-all">{tok.token}</code>
-                            </TableCell>
-                            <TableCell className="text-[var(--color-muted-foreground)] text-xs whitespace-nowrap">
-                              {new Date(tok.created_at).toLocaleString("zh-CN")}
-                            </TableCell>
-                            <TableCell>
-                              <Button variant="destructive" size="sm" onClick={() => handleDelete(tok.id)}>删除</Button>
-                            </TableCell>
-                          </TableRow>
-                        ))}
-                      </TableBody>
-                    </Table>
-                  )}
-                </CardContent>
-              </Card>
             </div>
           )}
 
@@ -675,6 +712,12 @@ export default function Admin() {
         node={editNode}
         onClose={() => setEditNode(null)}
         onSaved={(updated) => editNode && handleNodeSaved(editNode.id, updated)}
+      />
+
+      <ReinstallDialog
+        node={reinstallNode}
+        serverUrl={serverUrl}
+        onClose={() => setReinstallNode(null)}
       />
     </div>
   );
