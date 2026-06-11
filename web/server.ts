@@ -23,10 +23,29 @@ watch("src", { recursive: true }, async () => {
   console.log(`[${new Date().toLocaleTimeString()}] rebuilt`);
 });
 
+const API_BASE = process.env.API_BASE ?? "http://localhost:8080";
+
 const server = Bun.serve({
   port: Number(process.env.PORT ?? 5173),
   async fetch(req) {
-    const path = new URL(req.url).pathname;
+    const url = new URL(req.url);
+    const path = url.pathname;
+
+    // 代理 /api/* 和 /healthz 到后端
+    if (path.startsWith("/api/") || path === "/healthz") {
+      try {
+        return await fetch(`${API_BASE}${path}${url.search}`, {
+          method: req.method,
+          headers: req.headers,
+          body: req.body,
+        });
+      } catch {
+        return Response.json(
+          { error: `后端不可用 (${API_BASE})，请确认 sentinode-server 已启动` },
+          { status: 503 },
+        );
+      }
+    }
 
     // 静态资源：JS / CSS / 图片等
     if (path !== "/" && path.includes(".")) {

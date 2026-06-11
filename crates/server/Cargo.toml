@@ -11,11 +11,15 @@ path = "src/main.rs"
 [dependencies]
 anyhow = "1.0.102"
 axum = "0.8.9"
+chrono = { version = "0.4", features = ["serde"] }
 clap = { version = "4.6.1", features = ["derive", "env"] }
 common = { path = "../common" }
 prost = "0.14.4"
-sqlx = { version = "0.7", features = ["runtime-tokio-native-tls", "postgres"] }
+serde = { version = "1", features = ["derive"] }
+sqlx = { version = "0.7", features = ["runtime-tokio-native-tls", "postgres", "chrono"] }
 tokio = { version = "1.52.3", features = ["full"] }
 tonic = "0.14.6"
+tower-http = { version = "0.6", features = ["cors"] }
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
+uuid = { version = "1", features = ["v4"] }
