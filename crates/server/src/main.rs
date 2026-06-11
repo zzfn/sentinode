@@ -582,7 +582,7 @@ async fn sse_events(
     })
     .collect();
 
-    tracing::debug!("sse snapshot: {} nodes", snapshot.len());
+    tracing::info!("sse snapshot: {} nodes", snapshot.len());
 
     // 先发一个 comment 事件，强制 Cloudflare 等代理立即 flush 响应头和缓冲区
     let init_stream = tokio_stream::iter(vec![Ok(Event::default().comment("init"))]);
