@@ -282,12 +282,7 @@ impl Monitor for MonitorService {
             let db2 = self.db.clone();
             let nid = node_id;
             tokio::spawn(async move {
-                let private = ip == "unknown"
-                    || ip.starts_with("127.")
-                    || ip.starts_with("10.")
-                    || ip.starts_with("192.168.")
-                    || ip.starts_with("172.");
-                if private {
+                if is_private_ip(&ip) {
                     return;
                 }
                 if let Ok(resp) = reqwest::Client::builder()
@@ -630,12 +625,22 @@ fn extract_client_ip(headers: &HeaderMap) -> String {
 }
 
 fn is_private_ip(ip: &str) -> bool {
-    ip == "unknown"
-        || ip.starts_with("127.")
-        || ip.starts_with("10.")
-        || ip.starts_with("192.168.")
-        || ip.starts_with("172.")
-        || ip == "::1"
+    if ip == "unknown" || ip == "::1" {
+        return true;
+    }
+    if let Ok(addr) = ip.parse::<std::net::IpAddr>() {
+        return match addr {
+            std::net::IpAddr::V4(v4) => {
+                let o = v4.octets();
+                o[0] == 127
+                    || o[0] == 10
+                    || (o[0] == 172 && (16..=31).contains(&o[1]))
+                    || (o[0] == 192 && o[1] == 168)
+            }
+            std::net::IpAddr::V6(v6) => v6.is_loopback(),
+        };
+    }
+    false
 }
 
 // ── REST 处理函数 ─────────────────────────────────────────────────────────────
@@ -1546,7 +1551,7 @@ async fn main() -> Result<()> {
                 let res = sqlx::query(
                     "DELETE FROM metrics WHERE id IN (
                          SELECT id FROM metrics
-                         WHERE reported_at < NOW() - ($1 || ' days')::INTERVAL
+                         WHERE reported_at < NOW() - $1 * INTERVAL '1 day'
                          LIMIT 10000
                      )",
                 )

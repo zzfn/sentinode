@@ -26,6 +26,7 @@ export interface Node {
 export interface AdminNode extends Node {
   connected: boolean;
   ip: string;
+  expires_at: string | null;
   price: number | null;
   price_currency: string | null;
   latency_test_enabled: boolean;
