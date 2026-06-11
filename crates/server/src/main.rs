@@ -1,11 +1,8 @@
 use anyhow::Result;
 use axum::{
     extract::{Path, Query, State},
-    http::{HeaderMap, HeaderValue, StatusCode},
-    response::{
-        sse::{Event, KeepAlive, Sse},
-        IntoResponse,
-    },
+    http::StatusCode,
+    response::sse::{Event, KeepAlive, Sse},
     routing::{get, put},
     Json, Router,
 };
@@ -560,7 +557,9 @@ async fn get_node(
     Ok(Json(row.into()))
 }
 
-async fn sse_events(State(s): State<AppState>) -> impl IntoResponse {
+async fn sse_events(
+    State(s): State<AppState>,
+) -> Sse<impl tokio_stream::Stream<Item = Result<Event, Infallible>>> {
     let rx = s.event_tx.subscribe();
 
     // 建立连接时先推送当前所有节点快照
@@ -574,7 +573,6 @@ async fn sse_events(State(s): State<AppState>) -> impl IntoResponse {
     )
     .fetch_all(&s.db)
     .await
-    .map_err(|e| tracing::error!("sse snapshot query failed: {e}"))
     .unwrap_or_default()
     .into_iter()
     .filter_map(|row| {
@@ -583,12 +581,6 @@ async fn sse_events(State(s): State<AppState>) -> impl IntoResponse {
     })
     .collect();
 
-    tracing::warn!("sse snapshot: {} nodes", snapshot.len());
-
-    // 先发一个 comment 事件，强制 Cloudflare 等代理立即 flush 响应头和缓冲区
-    let init_stream = tokio_stream::iter(vec![Ok::<Event, Infallible>(
-        Event::default().comment("init"),
-    )]);
     let snapshot_stream = tokio_stream::iter(
         snapshot
             .into_iter()
@@ -597,14 +589,7 @@ async fn sse_events(State(s): State<AppState>) -> impl IntoResponse {
     let live_stream = BroadcastStream::new(rx)
         .filter_map(|msg| msg.ok().map(|data| Ok(Event::default().data(data))));
 
-    // X-Accel-Buffering: no 告知 Cloudflare / nginx 禁用响应缓冲，立即转发 SSE 数据
-    let mut headers = HeaderMap::new();
-    headers.insert("X-Accel-Buffering", HeaderValue::from_static("no"));
-
-    let sse = Sse::new(init_stream.chain(snapshot_stream).chain(live_stream))
-        .keep_alive(KeepAlive::default());
-
-    (headers, sse)
+    Sse::new(snapshot_stream.chain(live_stream)).keep_alive(KeepAlive::default())
 }
 
 async fn healthz() -> &'static str {
