@@ -43,11 +43,13 @@ const ChartContainer = React.forwardRef<
       <div
         ref={ref}
         data-chart={chartId}
-        className={cn("flex aspect-video justify-center text-xs", className)}
+        className={cn("w-full text-xs", className)}
         style={buildColorVars(config)}
         {...props}
       >
-        <ResponsiveContainer>{children as React.ReactElement}</ResponsiveContainer>
+        <ResponsiveContainer width="100%" height="100%">
+          {children as React.ReactElement}
+        </ResponsiveContainer>
       </div>
     </ChartContext.Provider>
   );
