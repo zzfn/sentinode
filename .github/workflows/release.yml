@@ -12,18 +12,18 @@ env:
 jobs:
   agent-binaries:
     name: Agent (${{ matrix.name }})
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.runner }}
     permissions:
       contents: write
     strategy:
       matrix:
         include:
-          - target: x86_64-unknown-linux-musl
+          - runner: ubuntu-latest
+            target: x86_64-unknown-linux-musl
             name: linux-amd64
-            apt: musl-tools
-          - target: aarch64-unknown-linux-musl
+          - runner: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-musl
             name: linux-arm64
-            apt: musl-tools gcc-aarch64-linux-gnu
     steps:
       - uses: actions/checkout@v4
 
@@ -35,14 +35,8 @@ jobs:
         with:
           key: ${{ matrix.target }}
 
-      - name: Install toolchain
-        run: sudo apt-get install -y ${{ matrix.apt }}
-
-      - name: Configure linker (arm64)
-        if: matrix.target == 'aarch64-unknown-linux-musl'
-        run: |
-          echo '[target.aarch64-unknown-linux-musl]' >> ~/.cargo/config.toml
-          echo 'linker = "aarch64-linux-gnu-gcc"' >> ~/.cargo/config.toml
+      - name: Install musl-tools
+        run: sudo apt-get install -y musl-tools
 
       - name: Build
         run: cargo build --release --bin sentinode-agent --target ${{ matrix.target }}
