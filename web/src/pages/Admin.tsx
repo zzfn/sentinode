@@ -2,19 +2,17 @@ import { useEffect, useRef, useState } from "react";
 import { Link } from "wouter";
 import {
   AdminNode, AdminStats, AgentToken, SERVER_URL,
-  createToken, deleteNode, deleteToken, fetchAdminNodes, fetchAdminStats, fetchTokens,
+  countryFlag, createToken, deleteNode, deleteToken,
+  fetchAdminNodes, fetchAdminStats, fetchTokens,
   toCNY, toggleLatencyTest, triggerUpgrade, updateNodeMeta,
 } from "../api";
 import { Alert, AlertDescription } from "../components/ui/alert";
-import { Button } from "../components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../components/ui/card";
 import { Input } from "../components/ui/input";
 import { Label } from "../components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../components/ui/select";
 import { Switch } from "../components/ui/switch";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../components/ui/table";
 import {
-  Bar, BarChart, CartesianGrid, Tooltip, XAxis, YAxis,
+  Bar, BarChart, CartesianGrid, XAxis, YAxis,
 } from "recharts";
 import {
   ChartContainer,
@@ -32,8 +30,44 @@ function buildScript(serverUrl: string, token: string): string {
 }
 
 const CURRENCIES = ["CNY", "USD", "EUR", "HKD"];
-
 type NavItem = "nodes" | "db";
+
+// ── 公共样式常量 ──────────────────────────────────────────────────────────────
+
+const CARD = "bg-white rounded-2xl border-2 border-[var(--color-ink)] shadow-[4px_4px_0_0_#1E293B]";
+const DIALOG_CARD = "bg-white rounded-2xl border-2 border-[var(--color-ink)] shadow-[8px_8px_0_0_#1E293B]";
+
+function Btn({
+  onClick, disabled, children, variant = "default", className = "",
+}: {
+  onClick?: () => void;
+  disabled?: boolean;
+  children: React.ReactNode;
+  variant?: "default" | "outline" | "danger" | "ghost";
+  className?: string;
+}) {
+  const base =
+    "inline-flex items-center justify-center gap-1.5 rounded-xl px-3 py-1.5 text-xs font-semibold border-2 border-[var(--color-ink)] transition-all duration-150 select-none cursor-pointer disabled:opacity-50 disabled:pointer-events-none";
+  const variants: Record<string, string> = {
+    default:
+      "bg-[var(--color-violet)] text-white shadow-[2px_2px_0_0_#1E293B] hover:shadow-[3px_3px_0_0_#1E293B] hover:-translate-x-px hover:-translate-y-px active:shadow-none active:translate-x-0.5 active:translate-y-0.5",
+    outline:
+      "bg-white text-[var(--color-ink)] shadow-[2px_2px_0_0_#1E293B] hover:bg-[var(--color-cream)] hover:shadow-[3px_3px_0_0_#1E293B] hover:-translate-x-px hover:-translate-y-px active:shadow-none",
+    danger:
+      "bg-white text-red-500 shadow-[2px_2px_0_0_#1E293B] hover:bg-red-50 hover:shadow-[3px_3px_0_0_#1E293B] hover:-translate-x-px hover:-translate-y-px active:shadow-none",
+    ghost:
+      "border-transparent bg-transparent text-[var(--color-muted-foreground)] shadow-none hover:bg-[var(--color-cream)] hover:text-[var(--color-ink)]",
+  };
+  return (
+    <button
+      className={`${base} ${variants[variant]} ${className}`}
+      onClick={onClick}
+      disabled={disabled}
+    >
+      {children}
+    </button>
+  );
+}
 
 // ── 节点信息编辑弹窗 ──────────────────────────────────────────────────────────
 
@@ -104,32 +138,39 @@ function EditNodeDialog({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-      <div className="absolute inset-0 bg-black/50" onClick={onClose} />
-      <Card className="relative z-10 w-full max-w-sm shadow-xl">
-        <CardHeader>
-          <CardTitle>编辑节点</CardTitle>
-          <CardDescription>{node.hostname}</CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          {error && <Alert variant="destructive"><AlertDescription>{error}</AlertDescription></Alert>}
+      <div className="absolute inset-0 bg-[var(--color-ink)]/40 backdrop-blur-sm" onClick={onClose} />
+      <div className={`relative z-10 w-full max-w-sm ${DIALOG_CARD} p-6 space-y-4`}>
+        <div className="flex items-center gap-2">
+          <span className="w-3 h-3 rounded-full bg-[var(--color-amber)] border-2 border-[var(--color-ink)]" />
+          <h2 className="text-base font-bold text-[var(--color-ink)]" style={{ fontFamily: "var(--font-display)" }}>
+            编辑节点
+          </h2>
+          <span className="ml-auto text-xs text-[var(--color-muted-foreground)] font-mono">{node.hostname}</span>
+        </div>
+
+        {error && <Alert variant="destructive"><AlertDescription>{error}</AlertDescription></Alert>}
+
+        <div className="space-y-3">
           <div className="space-y-1.5">
-            <Label>官网地址</Label>
+            <Label className="text-xs font-semibold text-[var(--color-muted-foreground)] uppercase tracking-wider">官网地址</Label>
             <Input type="url" placeholder="https://example.com" value={websiteUrl} onChange={(e) => setWebsiteUrl(e.target.value)} />
           </div>
-          <div className="space-y-1.5">
-            <Label>国家/地区代码</Label>
-            <Input placeholder="如: HK JP US" value={countryCode} onChange={(e) => setCountryCode(e.target.value)} maxLength={2} />
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1.5">
+              <Label className="text-xs font-semibold text-[var(--color-muted-foreground)] uppercase tracking-wider">国家代码</Label>
+              <Input placeholder="HK / JP / US" value={countryCode} onChange={(e) => setCountryCode(e.target.value)} maxLength={2} className="uppercase" />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs font-semibold text-[var(--color-muted-foreground)] uppercase tracking-wider">地区名称</Label>
+              <Input placeholder="香港 / 东京" value={location} onChange={(e) => setLocation(e.target.value)} />
+            </div>
           </div>
           <div className="space-y-1.5">
-            <Label>地区名称</Label>
-            <Input placeholder="如: 香港 东京" value={location} onChange={(e) => setLocation(e.target.value)} />
-          </div>
-          <div className="space-y-1.5">
-            <Label>到期时间</Label>
+            <Label className="text-xs font-semibold text-[var(--color-muted-foreground)] uppercase tracking-wider">到期时间</Label>
             <Input type="date" value={expiresAt} onChange={(e) => setExpiresAt(e.target.value)} />
           </div>
           <div className="space-y-1.5">
-            <Label>月费</Label>
+            <Label className="text-xs font-semibold text-[var(--color-muted-foreground)] uppercase tracking-wider">月费</Label>
             <div className="flex gap-2">
               <Input type="number" step="0.01" min="0" placeholder="0.00" value={price} onChange={(e) => setPrice(e.target.value)} className="flex-1" />
               <Select value={currency} onValueChange={setCurrency}>
@@ -141,12 +182,13 @@ function EditNodeDialog({
             </div>
             {cnyPreview && <p className="text-xs text-[var(--color-muted-foreground)]">{cnyPreview} / 月</p>}
           </div>
-          <div className="flex justify-end gap-2 pt-2">
-            <Button variant="outline" onClick={onClose}>取消</Button>
-            <Button onClick={handleSave} disabled={saving}>{saving ? "保存中…" : "保存"}</Button>
-          </div>
-        </CardContent>
-      </Card>
+        </div>
+
+        <div className="flex justify-end gap-2 pt-1">
+          <Btn variant="outline" onClick={onClose}>取消</Btn>
+          <Btn onClick={handleSave} disabled={saving}>{saving ? "保存中…" : "保存"}</Btn>
+        </div>
+      </div>
     </div>
   );
 }
@@ -161,7 +203,6 @@ function ReinstallDialog({
   onClose: () => void;
 }) {
   const [copied, setCopied] = useState(false);
-
   if (!node) return null;
 
   const script = node.token ? buildScript(serverUrl, node.token) : "";
@@ -176,30 +217,38 @@ function ReinstallDialog({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-      <div className="absolute inset-0 bg-black/50" onClick={onClose} />
-      <div className="relative bg-background rounded-lg shadow-xl w-full max-w-lg p-6 space-y-4">
-        <h2 className="text-lg font-semibold">重装 Agent — {node.hostname}</h2>
+      <div className="absolute inset-0 bg-[var(--color-ink)]/40 backdrop-blur-sm" onClick={onClose} />
+      <div className={`relative z-10 w-full max-w-lg ${DIALOG_CARD} p-6 space-y-4`}>
+        <div className="flex items-center gap-2">
+          <span className="w-3 h-3 rounded-full bg-[var(--color-violet)] border-2 border-[var(--color-ink)]" />
+          <h2 className="text-base font-bold text-[var(--color-ink)]" style={{ fontFamily: "var(--font-display)" }}>
+            重装 Agent
+          </h2>
+          <span className="ml-auto text-xs font-mono text-[var(--color-muted-foreground)]">{node.hostname}</span>
+        </div>
+
         {!node.token ? (
-          <p className="text-sm text-[var(--color-muted-foreground)]">该节点未绑定 Token，请先通过"添加 Agent"创建并安装。</p>
+          <p className="text-sm text-[var(--color-muted-foreground)]">该节点未绑定 Token，请通过"添加 Agent"重新安装。</p>
         ) : (
           <div className="space-y-2">
-            <div className="text-sm text-[var(--color-muted-foreground)]">Token：{node.token_name}</div>
-            <Label>安装命令（在目标节点执行）</Label>
+            <p className="text-xs text-[var(--color-muted-foreground)]">Token：<span className="font-semibold text-[var(--color-ink)]">{node.token_name}</span></p>
+            <Label className="text-xs font-semibold text-[var(--color-muted-foreground)] uppercase tracking-wider">在目标节点执行</Label>
             <div className="relative">
-              <pre className="bg-muted rounded p-3 text-xs overflow-x-auto whitespace-pre-wrap break-all pr-16">{script}</pre>
-              <Button
+              <pre className="bg-[#1a1a2e] text-[#e2e8f0] rounded-xl border-2 border-[var(--color-ink)] p-4 pr-20 overflow-x-auto text-xs leading-relaxed whitespace-pre font-mono">
+                {script}
+              </pre>
+              <Btn
                 variant={copied ? "default" : "outline"}
-                size="sm"
-                className="absolute top-2 right-2"
+                className="absolute top-2 right-2 text-[10px]"
                 onClick={handleCopy}
               >
-                {copied ? "已复制" : "复制"}
-              </Button>
+                {copied ? "已复制 ✓" : "复制"}
+              </Btn>
             </div>
           </div>
         )}
         <div className="flex justify-end">
-          <Button variant="outline" onClick={onClose}>关闭</Button>
+          <Btn variant="outline" onClick={onClose}>关闭</Btn>
         </div>
       </div>
     </div>
@@ -281,70 +330,111 @@ function AddAgentDialog({
 
   if (!open) return null;
 
+  const ACCENT_COLORS: Record<DialogStep, string> = {
+    name: "var(--color-violet)",
+    script: "var(--color-amber)",
+    success: "var(--color-emerald)",
+  };
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-      <div className="absolute inset-0 bg-black/50" onClick={handleClose} />
-      <Card className="relative z-10 w-full max-w-lg shadow-xl">
-        {step === "name" && (
-          <>
-            <CardHeader>
-              <CardTitle>添加 Agent</CardTitle>
-              <CardDescription>为新节点创建认证 Token</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              {error && <Alert variant="destructive"><AlertDescription>{error}</AlertDescription></Alert>}
-              <Input autoFocus placeholder="Agent 名称（如：my-server-01）" value={name} onChange={(e) => setName(e.target.value)} onKeyDown={(e) => e.key === "Enter" && handleCreate()} />
-              <div className="flex justify-end gap-2">
-                <Button variant="outline" onClick={handleClose}>取消</Button>
-                <Button onClick={handleCreate} disabled={creating || !name.trim()}>{creating ? "生成中…" : "下一步"}</Button>
+      <div className="absolute inset-0 bg-[var(--color-ink)]/40 backdrop-blur-sm" onClick={handleClose} />
+      <div className={`relative z-10 w-full max-w-lg ${DIALOG_CARD} overflow-hidden`}>
+        {/* 顶部色条 */}
+        <div
+          className="h-1.5 w-full"
+          style={{ background: ACCENT_COLORS[step] }}
+        />
+        <div className="p-6 space-y-4">
+          {step === "name" && (
+            <>
+              <div className="flex items-center gap-2">
+                <span className="w-3 h-3 rounded-full border-2 border-[var(--color-ink)]" style={{ background: "var(--color-violet)" }} />
+                <h2 className="text-base font-bold text-[var(--color-ink)]" style={{ fontFamily: "var(--font-display)" }}>添加 Agent</h2>
               </div>
-            </CardContent>
-          </>
-        )}
-        {step === "script" && (
-          <>
-            <CardHeader>
-              <CardTitle>安装 Agent</CardTitle>
-              <CardDescription>在目标服务器上运行以下命令</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
+              <p className="text-xs text-[var(--color-muted-foreground)]">为新节点创建认证 Token</p>
+              {error && <Alert variant="destructive"><AlertDescription>{error}</AlertDescription></Alert>}
+              <Input
+                autoFocus
+                placeholder="Agent 名称（如：my-server-01）"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && handleCreate()}
+              />
+              <div className="flex justify-end gap-2">
+                <Btn variant="outline" onClick={handleClose}>取消</Btn>
+                <Btn onClick={handleCreate} disabled={creating || !name.trim()}>{creating ? "生成中…" : "下一步 →"}</Btn>
+              </div>
+            </>
+          )}
+
+          {step === "script" && (
+            <>
+              <div className="flex items-center gap-2">
+                <span className="w-3 h-3 rounded-full border-2 border-[var(--color-ink)]" style={{ background: "var(--color-amber)" }} />
+                <h2 className="text-base font-bold text-[var(--color-ink)]" style={{ fontFamily: "var(--font-display)" }}>安装 Agent</h2>
+              </div>
+              <p className="text-xs text-[var(--color-muted-foreground)]">在目标服务器上运行以下命令</p>
               {error && <Alert variant="destructive"><AlertDescription>{error}</AlertDescription></Alert>}
               <div className="relative">
-                <pre className="bg-[#1e1e1e] text-[#d4d4d4] rounded-lg p-4 pr-20 overflow-x-auto text-xs leading-relaxed whitespace-pre font-mono">{script}</pre>
-                <Button variant={copied ? "secondary" : "outline"} size="sm" className="absolute top-2 right-2" onClick={handleCopy}>{copied ? "已复制" : "复制"}</Button>
+                <pre className="bg-[#1a1a2e] text-[#e2e8f0] rounded-xl border-2 border-[var(--color-ink)] p-4 pr-20 overflow-x-auto text-xs leading-relaxed whitespace-pre font-mono">
+                  {script}
+                </pre>
+                <Btn
+                  variant={copied ? "default" : "outline"}
+                  className="absolute top-2 right-2 text-[10px]"
+                  onClick={handleCopy}
+                >
+                  {copied ? "已复制 ✓" : "复制"}
+                </Btn>
               </div>
-              <div className="flex items-center gap-2 text-sm text-[var(--color-muted-foreground)]">
-                <div className="w-4 h-4 rounded-full border-2 border-primary border-t-transparent animate-spin flex-shrink-0" />
+              <div className="flex items-center gap-2 px-3 py-2.5 rounded-xl bg-[var(--color-cream)] border-2 border-[var(--color-border)] text-sm text-[var(--color-muted-foreground)]">
+                <div className="w-4 h-4 rounded-full border-2 border-[var(--color-violet)] border-t-transparent animate-spin flex-shrink-0" />
                 等待 Agent 连接中…
               </div>
-              <div className="flex justify-end"><Button variant="outline" size="sm" onClick={handleClose}>关闭</Button></div>
-            </CardContent>
-          </>
-        )}
-        {step === "success" && (
-          <>
-            <CardHeader><CardTitle>连接成功</CardTitle></CardHeader>
-            <CardContent className="space-y-4">
-              <div className="flex flex-col items-center py-6 gap-3">
-                <div className="w-14 h-14 rounded-full bg-green-100 dark:bg-green-900/30 flex items-center justify-center">
-                  <svg className="w-7 h-7 text-green-600 dark:text-green-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+              <div className="flex justify-end">
+                <Btn variant="ghost" onClick={handleClose}>关闭</Btn>
+              </div>
+            </>
+          )}
+
+          {step === "success" && (
+            <>
+              <div className="flex flex-col items-center py-4 gap-4">
+                <div
+                  className="w-16 h-16 rounded-2xl border-2 border-[var(--color-ink)] flex items-center justify-center shadow-[3px_3px_0_0_#1E293B]"
+                  style={{ background: "var(--color-emerald)" }}
+                >
+                  <svg className="w-8 h-8 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
                     <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
                   </svg>
                 </div>
-                <p className="text-sm text-[var(--color-muted-foreground)] text-center">
-                  节点 <span className="font-semibold text-foreground">{connectedHostname}</span> 已成功连接
-                </p>
+                <div className="text-center">
+                  <p className="font-bold text-[var(--color-ink)]" style={{ fontFamily: "var(--font-display)" }}>连接成功</p>
+                  <p className="text-sm text-[var(--color-muted-foreground)] mt-1">
+                    节点 <span className="font-semibold text-[var(--color-ink)]">{connectedHostname}</span> 已上线
+                  </p>
+                </div>
               </div>
-              <div className="flex justify-end"><Button onClick={handleClose}>完成</Button></div>
-            </CardContent>
-          </>
-        )}
-      </Card>
+              <div className="flex justify-end">
+                <Btn onClick={handleClose}>完成</Btn>
+              </div>
+            </>
+          )}
+        </div>
+      </div>
     </div>
   );
 }
 
 // ── 数据库统计视图 ─────────────────────────────────────────────────────────────
+
+const DB_ACCENTS = [
+  { bg: "var(--color-violet)", label: "数据库大小" },
+  { bg: "var(--color-emerald)", label: "节点数" },
+  { bg: "var(--color-pink)", label: "Metrics 行数" },
+  { bg: "var(--color-amber)", label: "Token 数" },
+];
 
 function DbStatsView() {
   const [stats, setStats] = useState<AdminStats | null>(null);
@@ -358,107 +448,112 @@ function DbStatsView() {
       .finally(() => setLoading(false));
   }, []);
 
-  if (loading) return <p className="text-sm text-[var(--color-muted-foreground)] py-8 text-center">加载中…</p>;
+  if (loading) return (
+    <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+      {[1, 2, 3, 4].map((i) => (
+        <div key={i} className={`h-24 ${CARD} animate-pulse`} style={{ opacity: 1 - i * 0.15 }} />
+      ))}
+    </div>
+  );
   if (error) return <Alert variant="destructive"><AlertDescription>{error}</AlertDescription></Alert>;
   if (!stats) return null;
+
+  const statValues = [
+    stats.db_size_pretty,
+    stats.nodes_count.toLocaleString(),
+    stats.metrics_count.toLocaleString(),
+    stats.tokens_count.toLocaleString(),
+  ];
 
   const avg7 = stats.daily_metrics.length >= 7
     ? Math.round(stats.daily_metrics.slice(-7).reduce((s, d) => s + d.count, 0) / 7)
     : null;
-
-  // 预估：1GB = 约多少条 metrics（metrics 行约 100 字节）
   const rowsPerGB = 1024 * 1024 * 1024 / 100;
-  const daysTo1GB = avg7 && avg7 > 0
-    ? Math.round(rowsPerGB / avg7)
-    : null;
+  const daysTo1GB = avg7 && avg7 > 0 ? Math.round(rowsPerGB / avg7) : null;
 
   return (
     <div className="space-y-6">
       {/* 总览卡片 */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-        <Card>
-          <CardHeader className="pb-2"><CardDescription>数据库总大小</CardDescription></CardHeader>
-          <CardContent><p className="text-2xl font-bold">{stats.db_size_pretty}</p></CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="pb-2"><CardDescription>节点数</CardDescription></CardHeader>
-          <CardContent><p className="text-2xl font-bold">{stats.nodes_count.toLocaleString()}</p></CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="pb-2"><CardDescription>metrics 行数</CardDescription></CardHeader>
-          <CardContent>
-            <p className="text-2xl font-bold">{stats.metrics_count.toLocaleString()}</p>
-            <p className="text-xs text-[var(--color-muted-foreground)] mt-1">近似值</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="pb-2"><CardDescription>Token 数</CardDescription></CardHeader>
-          <CardContent><p className="text-2xl font-bold">{stats.tokens_count.toLocaleString()}</p></CardContent>
-        </Card>
+        {DB_ACCENTS.map((a, i) => (
+          <div key={a.label} className={`${CARD} p-4 flex flex-col gap-1.5`}>
+            <div className="flex items-center gap-1.5">
+              <span className="w-2 h-2 rounded-full border border-[var(--color-ink)]" style={{ background: a.bg }} />
+              <span className="text-[11px] font-semibold uppercase tracking-widest text-[var(--color-muted-foreground)]">
+                {a.label}
+              </span>
+            </div>
+            <p className="text-2xl font-bold text-[var(--color-ink)]" style={{ fontFamily: "var(--font-display)" }}>
+              {statValues[i]}
+            </p>
+          </div>
+        ))}
       </div>
 
       {/* 每日增长图 */}
-      <Card>
-        <CardHeader>
-          <CardTitle>每日 metrics 增长</CardTitle>
-          <CardDescription>最近 14 天</CardDescription>
-        </CardHeader>
-        <CardContent>
+      <div className={`${CARD} overflow-hidden`}>
+        <div
+          className="px-5 py-3 border-b-2 border-[var(--color-ink)] flex items-center gap-2"
+          style={{ background: "var(--color-violet)" }}
+        >
+          <h3 className="font-bold text-sm text-white" style={{ fontFamily: "var(--font-display)" }}>
+            每日 Metrics 增长
+          </h3>
+          <span className="ml-auto text-[11px] text-white/70">最近 14 天</span>
+        </div>
+        <div className="p-5">
           {stats.daily_metrics.length === 0 ? (
             <p className="text-sm text-[var(--color-muted-foreground)] py-8 text-center">暂无数据</p>
           ) : (
             <ChartContainer
-              config={{ count: { label: "新增条数", color: "hsl(var(--chart-1))" } }}
+              config={{ count: { label: "新增条数", color: "hsl(var(--chart-2))" } }}
               height={220} className="w-full"
             >
               <BarChart data={stats.daily_metrics} margin={{ top: 4, right: 8, bottom: 0, left: 0 }}>
                 <defs>
                   <linearGradient id="barGrad" x1="0" y1="0" x2="0" y2="1">
                     <stop offset="0%" stopColor="var(--color-count)" stopOpacity={0.9} />
-                    <stop offset="100%" stopColor="var(--color-count)" stopOpacity={0.5} />
+                    <stop offset="100%" stopColor="var(--color-count)" stopOpacity={0.4} />
                   </linearGradient>
                 </defs>
-                <CartesianGrid strokeDasharray="3 3" stroke="rgba(128,128,128,0.15)" />
+                <CartesianGrid strokeDasharray="3 3" stroke="rgba(128,128,128,0.12)" />
                 <XAxis dataKey="day" tick={{ fontSize: 11 }} />
-                <YAxis tick={{ fontSize: 11 }} width={50} tickFormatter={(v) => v >= 1000 ? `${(v / 1000).toFixed(0)}k` : String(v)} />
+                <YAxis
+                  tick={{ fontSize: 11 }} width={50}
+                  tickFormatter={(v) => v >= 1000 ? `${(v / 1000).toFixed(0)}k` : String(v)}
+                />
                 <ChartTooltip content={<ChartTooltipContent formatter={(v: number) => [v.toLocaleString()]} />} />
-                <Bar dataKey="count" fill="url(#barGrad)" radius={[3, 3, 0, 0]} />
+                <Bar dataKey="count" fill="url(#barGrad)" radius={[4, 4, 0, 0]} />
               </BarChart>
             </ChartContainer>
           )}
-        </CardContent>
-      </Card>
+        </div>
+      </div>
 
       {/* 增长预估 */}
       {avg7 != null && (
-        <Card>
-          <CardHeader>
-            <CardTitle>增长速率与预估</CardTitle>
-            <CardDescription>基于最近 7 天均值</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <p className="text-sm text-[var(--color-muted-foreground)]">日均新增</p>
-                <p className="text-xl font-semibold mt-1">{avg7.toLocaleString()} 条</p>
+        <div className={`${CARD} p-5`}>
+          <div className="flex items-center gap-2 mb-4">
+            <span className="w-3 h-3 rounded-full bg-[var(--color-emerald)] border-2 border-[var(--color-ink)]" />
+            <h3 className="font-bold text-sm text-[var(--color-ink)]" style={{ fontFamily: "var(--font-display)" }}>
+              增长速率与预估
+            </h3>
+            <span className="text-xs text-[var(--color-muted-foreground)] ml-1">基于近 7 天均值</span>
+          </div>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+            {[
+              { label: "日均新增", value: `${avg7.toLocaleString()} 条` },
+              { label: "日均数据量", value: `≈ ${(avg7 * 100 / 1024 / 1024).toFixed(1)} MB` },
+              ...(daysTo1GB != null ? [{ label: "再增 1 GB 约需", value: `${daysTo1GB} 天` }] : []),
+              { label: "30 天预计增量", value: `≈ ${(avg7 * 30 * 100 / 1024 / 1024).toFixed(0)} MB` },
+            ].map(({ label, value }) => (
+              <div key={label} className="rounded-xl bg-[var(--color-cream)] border-2 border-[var(--color-border)] p-3">
+                <p className="text-[11px] text-[var(--color-muted-foreground)] font-semibold uppercase tracking-wider">{label}</p>
+                <p className="text-xl font-bold text-[var(--color-ink)] mt-1" style={{ fontFamily: "var(--font-display)" }}>{value}</p>
               </div>
-              <div>
-                <p className="text-sm text-[var(--color-muted-foreground)]">日均数据量</p>
-                <p className="text-xl font-semibold mt-1">≈ {(avg7 * 100 / 1024 / 1024).toFixed(1)} MB</p>
-              </div>
-              {daysTo1GB != null && (
-                <div>
-                  <p className="text-sm text-[var(--color-muted-foreground)]">再增 1 GB 约需</p>
-                  <p className="text-xl font-semibold mt-1">{daysTo1GB} 天</p>
-                </div>
-              )}
-              <div>
-                <p className="text-sm text-[var(--color-muted-foreground)]">30 天预计增量</p>
-                <p className="text-xl font-semibold mt-1">≈ {(avg7 * 30 * 100 / 1024 / 1024).toFixed(0)} MB</p>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
+            ))}
+          </div>
+        </div>
       )}
     </div>
   );
@@ -520,7 +615,6 @@ export default function Admin() {
       setError(e instanceof Error ? e.message : String(e));
       setUpgradingIds((prev) => { const s = new Set(prev); s.delete(id); return s; });
     }
-    // 30s 后清除升级中状态（足够时间让 agent 重启）
     setTimeout(() => setUpgradingIds((prev) => { const s = new Set(prev); s.delete(id); return s; }), 30_000);
   }
 
@@ -544,59 +638,87 @@ export default function Admin() {
     }
   }
 
-  const NAV_ITEMS: { key: NavItem; label: string; icon: React.ReactNode }[] = [
-    {
-      key: "nodes",
-      label: "节点管理",
-      icon: (
-        <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
-          <path strokeLinecap="round" strokeLinejoin="round" d="M5 12h14M12 5l7 7-7 7" />
-        </svg>
-      ),
-    },
-    {
-      key: "db",
-      label: "数据库统计",
-      icon: (
-        <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
-          <path strokeLinecap="round" strokeLinejoin="round" d="M4 7c0-1.657 3.582-3 8-3s8 1.343 8 3M4 7v10c0 1.657 3.582 3 8 3s8-1.343 8-3V7M4 12c0 1.657 3.582 3 8 3s8-1.343 8-3" />
-        </svg>
-      ),
-    },
+  const onlineCount = nodes.filter((n) => (Date.now() - new Date(n.last_seen).getTime()) < 120_000).length;
+
+  const NAV_ITEMS: { key: NavItem; label: string; dot: string }[] = [
+    { key: "nodes", label: "节点管理", dot: "var(--color-emerald)" },
+    { key: "db", label: "数据统计", dot: "var(--color-violet)" },
   ];
 
   return (
-    <div className="min-h-screen bg-[var(--color-background)] flex flex-col">
-      {/* 顶部 Header */}
-      <header className="border-b border-[var(--color-border)] bg-[var(--color-card)] flex-shrink-0">
-        <div className="px-4 h-14 flex items-center justify-between">
+    <div className="min-h-screen flex flex-col" style={{ background: "var(--color-cream)" }}>
+      {/* ── Header ── */}
+      <header className="relative overflow-hidden border-b-2 border-[var(--color-ink)] bg-white flex-shrink-0">
+        <div className="absolute -top-6 -right-6 w-32 h-32 rounded-full opacity-10 pointer-events-none" style={{ background: "var(--color-pink)" }} />
+        <div className="absolute top-3 right-24 w-4 h-4 rounded-full opacity-30 pointer-events-none" style={{ background: "var(--color-amber)" }} />
+
+        <div className="relative max-w-7xl mx-auto px-5 h-14 flex items-center justify-between gap-4">
           <div className="flex items-center gap-3">
-            <Link href="/" className="text-sm text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)] transition-colors">
-              ← 返回首页
-            </Link>
-            <span className="text-[var(--color-border)]">|</span>
-            <h1 className="text-base font-semibold">管理后台</h1>
+            <div
+              className="flex items-center justify-center w-8 h-8 rounded-xl border-2 border-[var(--color-ink)]"
+              style={{ background: "var(--color-ink)" }}
+            >
+              <svg viewBox="0 0 20 20" fill="none" className="w-4 h-4">
+                <rect x="3" y="5" width="14" height="10" rx="2" stroke="white" strokeWidth="1.8" />
+                <path d="M7 9h6M7 12h4" stroke="white" strokeWidth="1.5" strokeLinecap="round" />
+              </svg>
+            </div>
+            <div>
+              <h1 className="text-base font-bold leading-none text-[var(--color-ink)]" style={{ fontFamily: "var(--font-display)" }}>
+                管理<span style={{ color: "var(--color-pink)" }}>后台</span>
+              </h1>
+              <p className="text-[10px] text-[var(--color-muted-foreground)] mt-0.5">
+                {onlineCount} / {nodes.length} 在线
+              </p>
+            </div>
           </div>
-          <Button size="sm" onClick={() => setDialogOpen(true)}>+ 添加 Agent</Button>
+
+          <div className="flex items-center gap-2">
+            <Link
+              href="/"
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold
+                border-2 border-[var(--color-ink)] bg-white text-[var(--color-ink)]
+                shadow-[2px_2px_0_0_#1E293B]
+                hover:bg-[var(--color-cream)] hover:shadow-[3px_3px_0_0_#1E293B]
+                transition-all duration-150"
+            >
+              ← 首页
+            </Link>
+            <button
+              onClick={() => setDialogOpen(true)}
+              className="flex items-center gap-1.5 px-4 py-1.5 rounded-full text-xs font-bold
+                border-2 border-[var(--color-ink)] text-white
+                shadow-[3px_3px_0_0_#1E293B]
+                hover:shadow-[4px_4px_0_0_#1E293B] hover:-translate-x-px hover:-translate-y-px
+                active:shadow-none active:translate-x-0.5 active:translate-y-0.5
+                transition-all duration-150 cursor-pointer"
+              style={{ background: "var(--color-violet)" }}
+            >
+              + 添加 Agent
+            </button>
+          </div>
         </div>
       </header>
 
-      <div className="flex flex-1 overflow-hidden">
-        {/* 左侧导航 */}
-        <nav className="w-48 flex-shrink-0 border-r border-[var(--color-border)] bg-[var(--color-card)] py-4">
-          <ul className="space-y-0.5 px-2">
+      <div className="flex flex-1 overflow-hidden max-w-7xl w-full mx-auto">
+        {/* ── 侧边导航 ── */}
+        <nav className="w-44 flex-shrink-0 border-r-2 border-[var(--color-ink)] bg-white py-5 px-3">
+          <ul className="space-y-1.5">
             {NAV_ITEMS.map((item) => (
               <li key={item.key}>
                 <button
                   onClick={() => setNav(item.key)}
                   className={[
-                    "w-full flex items-center gap-2.5 px-3 py-2 rounded-md text-sm transition-colors text-left",
+                    "w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-sm font-semibold transition-all duration-150 cursor-pointer text-left border-2",
                     nav === item.key
-                      ? "bg-[var(--color-primary)] text-white font-medium"
-                      : "text-[var(--color-muted-foreground)] hover:bg-[var(--color-border)]/30 hover:text-[var(--color-foreground)]",
+                      ? "border-[var(--color-ink)] bg-[var(--color-ink)] text-white shadow-[2px_2px_0_0_rgba(0,0,0,0.3)]"
+                      : "border-transparent text-[var(--color-muted-foreground)] hover:bg-[var(--color-cream)] hover:text-[var(--color-ink)] hover:border-[var(--color-border)]",
                   ].join(" ")}
                 >
-                  {item.icon}
+                  <span
+                    className="w-2 h-2 rounded-full flex-shrink-0 border border-white/30"
+                    style={{ background: nav === item.key ? "white" : item.dot }}
+                  />
                   {item.label}
                 </button>
               </li>
@@ -604,7 +726,7 @@ export default function Admin() {
           </ul>
         </nav>
 
-        {/* 内容区 */}
+        {/* ── 内容区 ── */}
         <main className="flex-1 overflow-auto p-6">
           {error && (
             <Alert variant="destructive" className="mb-4">
@@ -614,107 +736,144 @@ export default function Admin() {
 
           {/* 节点管理 */}
           {nav === "nodes" && (
-            <div className="space-y-6">
-              <Card>
-                <CardHeader>
-                  <CardTitle>节点详情</CardTitle>
-                  <CardDescription>共 {nodes.length} 个节点</CardDescription>
-                </CardHeader>
-                <CardContent>
-                  {nodes.length === 0 ? (
-                    <p className="text-sm text-[var(--color-muted-foreground)] py-8 text-center">暂无节点</p>
-                  ) : (
-                    <Table>
-                      <TableHeader>
-                        <TableRow>
-                          <TableHead>主机名</TableHead>
-                          <TableHead>IP</TableHead>
-                          <TableHead>到期时间</TableHead>
-                          <TableHead>月费</TableHead>
-                          <TableHead className="w-20">三网测速</TableHead>
-                          <TableHead className="w-32">操作</TableHead>
-                        </TableRow>
-                      </TableHeader>
-                      <TableBody>
-                        {nodes.map((n) => {
-                          const cny = nodeCnyPrices[n.id];
-                          const daysLeft = n.expires_at
-                            ? Math.ceil((new Date(n.expires_at).getTime() - Date.now()) / 86_400_000)
-                            : null;
-                          return (
-                            <TableRow key={n.id}>
-                              <TableCell className="font-medium">
-                                <div className="flex items-center gap-1.5">
-                                  {n.country_code && (
-                                    <span>{Array.from(n.country_code.toUpperCase()).map(c => String.fromCodePoint(c.charCodeAt(0) + 0x1f1e6 - 65)).join("")}</span>
-                                  )}
-                                  {n.hostname}
-                                </div>
-                                {n.location && <div className="text-xs text-[var(--color-muted-foreground)]">{n.location}</div>}
-                              </TableCell>
-                              <TableCell>
-                                <code className="text-xs font-mono bg-muted px-1.5 py-0.5 rounded">{n.ip}</code>
-                              </TableCell>
-                              <TableCell className="text-sm">
-                                {n.expires_at ? (
-                                  <span className={daysLeft != null && daysLeft <= 7 ? "text-destructive font-medium" : daysLeft != null && daysLeft <= 30 ? "text-[var(--color-warning)] font-medium" : ""}>
-                                    {new Date(n.expires_at).toLocaleDateString("zh-CN")}
-                                    {daysLeft != null && <span className="ml-1 text-xs text-[var(--color-muted-foreground)]">({daysLeft < 0 ? "已过期" : `${daysLeft}天`})</span>}
-                                  </span>
-                                ) : <span className="text-[var(--color-muted-foreground)]">—</span>}
-                              </TableCell>
-                              <TableCell className="text-sm">
-                                {n.price != null ? (
-                                  <span>
-                                    {n.price} {n.price_currency}
-                                    {cny != null && n.price_currency !== "CNY" && (
-                                      <span className="ml-1 text-xs text-[var(--color-muted-foreground)]">≈ ¥{cny.toFixed(0)}</span>
-                                    )}
-                                  </span>
-                                ) : <span className="text-[var(--color-muted-foreground)]">—</span>}
-                              </TableCell>
-                              <TableCell>
-                                <Switch
-                                  checked={n.latency_test_enabled}
-                                  onCheckedChange={(checked) => {
-                                    setNodes((prev) => prev.map((x) => x.id === n.id ? { ...x, latency_test_enabled: checked } : x));
-                                    toggleLatencyTest(n.id, checked).catch(() =>
-                                      setNodes((prev) => prev.map((x) => x.id === n.id ? { ...x, latency_test_enabled: !checked } : x))
-                                    );
-                                  }}
-                                />
-                              </TableCell>
-                              <TableCell>
-                                <div className="flex gap-1.5 flex-wrap">
-                                  <Button variant="outline" size="sm" onClick={() => setEditNode(n)}>编辑</Button>
-                                  <Button variant="outline" size="sm" onClick={() => setReinstallNode(n)}>重装</Button>
-                                  <Button
-                                    variant="outline"
-                                    size="sm"
-                                    disabled={upgradingIds.has(n.id)}
-                                    onClick={() => handleUpgrade(n.id)}
-                                  >
-                                    {upgradingIds.has(n.id) ? "升级中…" : "升级"}
-                                  </Button>
-                                  <Button
-                                    variant="outline"
-                                    size="sm"
-                                    className="text-destructive hover:text-destructive"
-                                    onClick={() => { if (confirm(`确定删除节点 ${n.hostname}？`)) handleDeleteNode(n.id); }}
-                                  >
-                                    删除
-                                  </Button>
-                                </div>
-                              </TableCell>
-                            </TableRow>
-                          );
-                        })}
-                      </TableBody>
-                    </Table>
-                  )}
-                </CardContent>
-              </Card>
+            <div className="space-y-4">
+              {/* 标题 */}
+              <div className="flex items-center gap-2">
+                <h2 className="text-lg font-bold text-[var(--color-ink)]" style={{ fontFamily: "var(--font-display)" }}>
+                  节点详情
+                </h2>
+                <span className="px-2 py-0.5 rounded-full text-xs font-semibold border-2 border-[var(--color-ink)] bg-white">
+                  {nodes.length}
+                </span>
+              </div>
 
+              {/* 节点卡片列表（移动端友好） */}
+              {nodes.length === 0 ? (
+                <div className={`${CARD} p-12 text-center text-sm text-[var(--color-muted-foreground)]`}>
+                  暂无节点，点击右上角"添加 Agent"开始
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {nodes.map((n) => {
+                    const cny = nodeCnyPrices[n.id];
+                    const daysLeft = n.expires_at
+                      ? Math.ceil((new Date(n.expires_at).getTime() - Date.now()) / 86_400_000)
+                      : null;
+                    const online = (Date.now() - new Date(n.last_seen).getTime()) < 120_000;
+                    return (
+                      <div key={n.id} className={`${CARD} p-4`}>
+                        <div className="flex items-start gap-4 flex-wrap">
+                          {/* 主机信息 */}
+                          <div className="flex-1 min-w-0 space-y-1">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              {online ? (
+                                <span className="relative flex h-2 w-2 flex-shrink-0">
+                                  <span className="absolute inline-flex h-full w-full rounded-full opacity-75" style={{ background: "var(--color-emerald)", animation: "ping-slow 1.4s cubic-bezier(0,0,0.2,1) infinite" }} />
+                                  <span className="relative inline-flex rounded-full h-2 w-2" style={{ background: "var(--color-emerald)" }} />
+                                </span>
+                              ) : (
+                                <span className="h-2 w-2 rounded-full bg-red-400 flex-shrink-0" />
+                              )}
+                              {n.country_code && (
+                                <span className="text-base leading-none">{countryFlag(n.country_code)}</span>
+                              )}
+                              <span className="font-bold text-[var(--color-ink)]" style={{ fontFamily: "var(--font-display)" }}>
+                                {n.hostname}
+                              </span>
+                              {n.location && (
+                                <span className="text-xs text-[var(--color-muted-foreground)]">{n.location}</span>
+                              )}
+                              <code className="text-[10px] font-mono bg-[var(--color-cream)] border border-[var(--color-border)] px-1.5 py-0.5 rounded-lg">
+                                {n.ip}
+                              </code>
+                            </div>
+                            <div className="flex flex-wrap gap-x-4 gap-y-0.5 text-xs text-[var(--color-muted-foreground)]">
+                              {n.os && <span>{n.os}</span>}
+                              {n.cpu_model && <span className="truncate max-w-[200px]">{n.cpu_model}</span>}
+                              {n.expires_at && (
+                                <span className={daysLeft != null && daysLeft <= 7 ? "text-red-500 font-semibold" : daysLeft != null && daysLeft <= 30 ? "text-[var(--color-amber)] font-semibold" : ""}>
+                                  到期 {new Date(n.expires_at).toLocaleDateString("zh-CN")}
+                                  {daysLeft != null && ` (${daysLeft < 0 ? "已过期" : `${daysLeft}天`})`}
+                                </span>
+                              )}
+                              {n.price != null && (
+                                <span>
+                                  {n.price} {n.price_currency}
+                                  {cny != null && n.price_currency !== "CNY" && ` ≈ ¥${cny.toFixed(0)}`}
+                                </span>
+                              )}
+                            </div>
+                          </div>
+
+                          {/* 三网测速开关 + 操作按钮 */}
+                          <div className="flex items-center gap-3 flex-wrap">
+                            <div className="flex items-center gap-1.5">
+                              <span className="text-xs text-[var(--color-muted-foreground)]">三网测速</span>
+                              <Switch
+                                checked={n.latency_test_enabled}
+                                onCheckedChange={(checked) => {
+                                  setNodes((prev) => prev.map((x) => x.id === n.id ? { ...x, latency_test_enabled: checked } : x));
+                                  toggleLatencyTest(n.id, checked).catch(() =>
+                                    setNodes((prev) => prev.map((x) => x.id === n.id ? { ...x, latency_test_enabled: !checked } : x))
+                                  );
+                                }}
+                              />
+                            </div>
+                            <div className="flex gap-1.5">
+                              <Btn variant="outline" onClick={() => setEditNode(n)}>编辑</Btn>
+                              <Btn variant="outline" onClick={() => setReinstallNode(n)}>重装</Btn>
+                              <Btn
+                                variant="outline"
+                                disabled={upgradingIds.has(n.id)}
+                                onClick={() => handleUpgrade(n.id)}
+                              >
+                                {upgradingIds.has(n.id) ? "升级中…" : "升级"}
+                              </Btn>
+                              <Btn
+                                variant="danger"
+                                onClick={() => { if (confirm(`确定删除节点 ${n.hostname}？`)) handleDeleteNode(n.id); }}
+                              >
+                                删除
+                              </Btn>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+
+              {/* Token 列表 */}
+              {tokens.length > 0 && (
+                <div className="space-y-2 pt-2">
+                  <div className="flex items-center gap-2">
+                    <h2 className="text-base font-bold text-[var(--color-ink)]" style={{ fontFamily: "var(--font-display)" }}>
+                      Token 列表
+                    </h2>
+                    <span className="px-2 py-0.5 rounded-full text-xs font-semibold border-2 border-[var(--color-ink)] bg-white">
+                      {tokens.length}
+                    </span>
+                  </div>
+                  <div className="space-y-2">
+                    {tokens.map((t) => (
+                      <div key={t.id} className="bg-white rounded-xl border-2 border-[var(--color-border)] px-4 py-3 flex items-center gap-3">
+                        <span className="w-2 h-2 rounded-full bg-[var(--color-amber)] border border-[var(--color-ink)] flex-shrink-0" />
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-semibold text-[var(--color-ink)]">{t.name}</p>
+                          <p className="text-[10px] font-mono text-[var(--color-muted-foreground)] truncate">{t.token}</p>
+                        </div>
+                        <p className="text-xs text-[var(--color-muted-foreground)] flex-shrink-0 hidden sm:block">
+                          {new Date(t.created_at).toLocaleDateString("zh-CN")}
+                        </p>
+                        <Btn variant="danger" onClick={() => { if (confirm(`确定删除 Token "${t.name}"？`)) handleDeleteToken(t.id); }}>
+                          删除
+                        </Btn>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
           )}
 

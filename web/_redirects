@@ -1,2 +1,1 @@
 /cdn-cgi/* /cdn-cgi/:splat 200
-/* /index.html 200
