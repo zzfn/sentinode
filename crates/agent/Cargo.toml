@@ -16,7 +16,7 @@ local-ip-address = "0.6.13"
 prost = "0.14.4"
 sysinfo = "0.39.3"
 tokio = { version = "1.52.3", features = ["full"] }
-tonic = { version = "0.14.6", features = ["tls-native-roots"] }
+tonic = { version = "0.14.6", features = ["tls-webpki-roots"] }
 rustls = { version = "0.23", features = ["ring"] }
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
