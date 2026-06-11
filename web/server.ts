@@ -24,7 +24,7 @@ watch("src", { recursive: true }, async () => {
 });
 
 const server = Bun.serve({
-  port: 3000,
+  port: Number(process.env.PORT ?? 5173),
   async fetch(req) {
     const path = new URL(req.url).pathname;
 
