@@ -551,16 +551,22 @@ function VisitorsView() {
                     <span className="w-5 h-4 rounded-sm bg-[var(--color-border)] flex-shrink-0" />
                   )}
 
-                  {/* IP + 归属地 */}
+                  {/* IP + 归属地 + ASN */}
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 flex-wrap">
                       <code className="text-xs font-mono text-[var(--color-ink)]">{v.ip}</code>
                       {v.location && (
                         <span className="text-xs text-[var(--color-muted-foreground)]">{v.location}</span>
                       )}
+                      {v.isp && (
+                        <span className="text-[10px] px-1.5 py-0.5 rounded-md bg-[var(--color-cream)] border border-[var(--color-border)] text-[var(--color-muted-foreground)]">
+                          {v.isp}
+                        </span>
+                      )}
                     </div>
-                    <div className="text-[10px] text-[var(--color-muted-foreground)] mt-0.5">
-                      <span className="mr-2">{v.page}</span>
+                    <div className="text-[10px] text-[var(--color-muted-foreground)] mt-0.5 flex gap-2 flex-wrap">
+                      {v.asn && <span className="font-mono">{v.asn}</span>}
+                      <span>{v.page}</span>
                       <span>首次 {fmtTime(v.first_seen)}</span>
                     </div>
                   </div>

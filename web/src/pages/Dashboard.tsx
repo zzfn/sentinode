@@ -322,6 +322,11 @@ export default function Dashboard() {
               <code className="hidden md:inline font-mono text-[10px] bg-[var(--color-cream)] border border-[var(--color-border)] px-1 py-0.5 rounded">
                 {visitorInfo.ip}
               </code>
+              {visitorInfo.isp && (
+                <span className="hidden lg:inline text-[10px] px-1.5 py-0.5 rounded bg-[var(--color-cream)] border border-[var(--color-border)]">
+                  {visitorInfo.isp}
+                </span>
+              )}
               <span className="text-[var(--color-border)]">·</span>
               <span>
                 今日第 <span className="font-semibold text-[var(--color-ink)]">{visitorInfo.today_rank}</span> 位

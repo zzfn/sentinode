@@ -568,6 +568,8 @@ struct VisitorRow {
     ip: String,
     country_code: Option<String>,
     location: Option<String>,
+    asn: Option<String>,
+    isp: Option<String>,
     page: String,
     first_seen: DateTime<Utc>,
     last_seen: DateTime<Utc>,
@@ -578,6 +580,8 @@ struct VisitorEntry {
     ip: String,
     country_code: Option<String>,
     location: Option<String>,
+    asn: Option<String>,
+    isp: Option<String>,
     page: String,
     first_seen: DateTime<Utc>,
     last_seen: DateTime<Utc>,
@@ -601,6 +605,8 @@ struct BeaconResp {
     ip: String,
     country_code: Option<String>,
     location: Option<String>,
+    asn: Option<String>,
+    isp: Option<String>,
     today_rank: i64,
     total_rank: i64,
 }
@@ -686,12 +692,18 @@ async fn record_beacon(
 
     // UPSERT：同一 IP 只保留一条记录，每次访问更新 last_seen
     let new_id = s.id_gen.lock().unwrap().next();
-    let row: Option<(i64, Option<String>, Option<String>)> = sqlx::query_as(
+    let row: Option<(
+        i64,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+    )> = sqlx::query_as(
         "INSERT INTO visitors (id, ip, page, first_seen, last_seen)
-         VALUES ($1, $2, $3, NOW(), NOW())
-         ON CONFLICT (ip) DO UPDATE
-           SET last_seen = NOW(), page = EXCLUDED.page
-         RETURNING id, country_code, location",
+             VALUES ($1, $2, $3, NOW(), NOW())
+             ON CONFLICT (ip) DO UPDATE
+               SET last_seen = NOW(), page = EXCLUDED.page
+             RETURNING id, country_code, location, asn, isp",
     )
     .bind(new_id)
     .bind(&ip)
@@ -700,7 +712,7 @@ async fn record_beacon(
     .await
     .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    let (vid, country_code, location) = row.unwrap_or((new_id, None, None));
+    let (vid, country_code, location, asn, isp) = row.unwrap_or((new_id, None, None, None, None));
 
     // GeoIP（异步，首次无 country_code 时触发）
     if country_code.is_none() && !is_private_ip(&ip) {
@@ -712,7 +724,7 @@ async fn record_beacon(
                 .build()
                 .unwrap()
                 .get(format!(
-                    "http://ip-api.com/json/{}?fields=status,countryCode,country,city&lang=zh-CN",
+                    "http://ip-api.com/json/{}?fields=status,countryCode,country,regionName,city,isp,org,as&lang=zh-CN",
                     ip_clone
                 ))
                 .send()
@@ -721,18 +733,25 @@ async fn record_beacon(
                 if let Ok(data) = resp.json::<serde_json::Value>().await {
                     if data["status"] == "success" {
                         let cc = data["countryCode"].as_str().unwrap_or("").to_string();
+                        let region = data["regionName"].as_str().unwrap_or("").to_string();
                         let city = data["city"].as_str().unwrap_or("").to_string();
                         let country = data["country"].as_str().unwrap_or("").to_string();
-                        let loc = if city.is_empty() {
-                            country
-                        } else {
-                            format!("{} {}", country, city)
+                        let loc = match (country.is_empty(), region.is_empty(), city.is_empty()) {
+                            (false, false, false) => format!("{} {} {}", country, region, city),
+                            (false, false, true)  => format!("{} {}", country, region),
+                            (false, true, false)  => format!("{} {}", country, city),
+                            _                     => country,
                         };
+                        let asn_val = data["as"].as_str().unwrap_or("").to_string();
+                        let isp_val = data["isp"].as_str().unwrap_or("").to_string();
                         let _ = sqlx::query(
-                            "UPDATE visitors SET country_code=$1, location=$2 WHERE id=$3 AND country_code IS NULL",
+                            "UPDATE visitors SET country_code=$1, location=$2, asn=$3, isp=$4
+                             WHERE id=$5 AND country_code IS NULL",
                         )
                         .bind(&cc)
                         .bind(&loc)
+                        .bind(if asn_val.is_empty() { None } else { Some(asn_val) })
+                        .bind(if isp_val.is_empty() { None } else { Some(isp_val) })
                         .bind(vid)
                         .execute(&pool)
                         .await;
@@ -758,6 +777,8 @@ async fn record_beacon(
         ip,
         country_code,
         location,
+        asn,
+        isp,
         today_rank,
         total_rank,
     }))
@@ -783,7 +804,7 @@ async fn admin_visitors(State(s): State<AppState>) -> Result<Json<VisitorStatsRe
     .unwrap_or(0);
 
     let rows = sqlx::query_as::<_, VisitorRow>(
-        "SELECT id, ip, country_code, location, page, first_seen, last_seen
+        "SELECT id, ip, country_code, location, asn, isp, page, first_seen, last_seen
          FROM visitors ORDER BY last_seen DESC LIMIT 100",
     )
     .fetch_all(&s.db)
@@ -796,6 +817,8 @@ async fn admin_visitors(State(s): State<AppState>) -> Result<Json<VisitorStatsRe
             ip: r.ip,
             country_code: r.country_code,
             location: r.location,
+            asn: r.asn,
+            isp: r.isp,
             page: r.page,
             first_seen: r.first_seen,
             last_seen: r.last_seen,
@@ -1455,6 +1478,8 @@ async fn init_schema(pool: &PgPool) -> Result<()> {
             ip         TEXT NOT NULL UNIQUE,
             country_code TEXT,
             location   TEXT,
+            asn        TEXT,
+            isp        TEXT,
             page       TEXT NOT NULL DEFAULT '/',
             first_seen TIMESTAMPTZ NOT NULL DEFAULT NOW(),
             last_seen  TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -1463,6 +1488,14 @@ async fn init_schema(pool: &PgPool) -> Result<()> {
     .execute(pool)
     .await
     .ok();
+    sqlx::query("ALTER TABLE visitors ADD COLUMN IF NOT EXISTS asn TEXT")
+        .execute(pool)
+        .await
+        .ok();
+    sqlx::query("ALTER TABLE visitors ADD COLUMN IF NOT EXISTS isp TEXT")
+        .execute(pool)
+        .await
+        .ok();
     sqlx::query("CREATE INDEX IF NOT EXISTS idx_visitors_last_seen ON visitors(last_seen DESC)")
         .execute(pool)
         .await

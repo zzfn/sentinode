@@ -231,6 +231,8 @@ export interface VisitorEntry {
   ip: string;
   country_code: string | null;
   location: string | null;
+  asn: string | null;
+  isp: string | null;
   page: string;
   first_seen: string;
   last_seen: string;
@@ -247,6 +249,8 @@ export interface BeaconInfo {
   ip: string;
   country_code: string | null;
   location: string | null;
+  asn: string | null;
+  isp: string | null;
   today_rank: number;
   total_rank: number;
 }
