@@ -11,6 +11,8 @@ dependencies = [
  "common",
  "local-ip-address",
  "prost",
+ "reqwest",
+ "serde",
  "sysinfo",
  "tokio",
  "tonic",

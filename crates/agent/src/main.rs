@@ -10,6 +10,97 @@ use tonic::transport::{Channel, ClientTlsConfig};
 use tonic::Request;
 use tracing::{error, info, warn};
 
+// ── 自升级 ───────────────────────────────────────────────────────────────────
+
+#[derive(serde::Deserialize)]
+struct GithubRelease {
+    tag_name: String,
+    assets: Vec<GithubAsset>,
+}
+
+#[derive(serde::Deserialize)]
+struct GithubAsset {
+    name: String,
+    browser_download_url: String,
+}
+
+fn platform_suffix() -> Option<&'static str> {
+    #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+    return Some("linux-amd64");
+    #[cfg(all(target_os = "linux", target_arch = "aarch64"))]
+    return Some("linux-arm64");
+    #[allow(unreachable_code)]
+    None
+}
+
+async fn self_upgrade(http: &reqwest::Client) -> Result<()> {
+    let suffix = match platform_suffix() {
+        Some(s) => s,
+        None => {
+            warn!("self-upgrade: unsupported platform, skipping");
+            return Ok(());
+        }
+    };
+
+    let release: GithubRelease = http
+        .get("https://api.github.com/repos/zzfn/sentinode/releases/latest")
+        .header(
+            "User-Agent",
+            concat!("sentinode-agent/", env!("CARGO_PKG_VERSION")),
+        )
+        .send()
+        .await?
+        .json()
+        .await?;
+
+    let latest = release.tag_name.trim_start_matches('v');
+    let current = env!("CARGO_PKG_VERSION");
+
+    if latest == current {
+        info!("self-upgrade: already up-to-date (v{current})");
+        return Ok(());
+    }
+
+    let asset_name = format!("sentinode-agent-{suffix}");
+    let url = release
+        .assets
+        .iter()
+        .find(|a| a.name == asset_name)
+        .map(|a| &a.browser_download_url)
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "asset '{asset_name}' not found in release {}",
+                release.tag_name
+            )
+        })?;
+
+    info!("self-upgrade: v{current} → v{latest}, downloading {asset_name}...");
+
+    let bytes = http.get(url).send().await?.bytes().await?;
+
+    // 写入与当前二进制同目录的临时文件，rename 在同分区上是原子操作
+    let current_exe = std::env::current_exe()?;
+    let tmp = current_exe.with_extension("tmp");
+    tokio::fs::write(&tmp, &bytes).await?;
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        tokio::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o755)).await?;
+    }
+
+    tokio::fs::rename(&tmp, &current_exe).await?;
+    info!("self-upgrade: done (v{latest}), re-executing...");
+
+    // re-exec：启动新二进制（继承相同参数），当前进程退出
+    let args: Vec<String> = std::env::args().collect();
+    std::process::Command::new(&current_exe)
+        .args(&args[1..])
+        .spawn()
+        .map_err(|e| anyhow::anyhow!("failed to re-exec: {e}"))?;
+    std::process::exit(0);
+}
+
 const LATENCY_TARGETS: &[(&str, &str)] = &[
     ("cu", "sh-cu-v4.ip.zstaticcdn.com:80"),
     ("cm", "sh-cm-v4.ip.zstaticcdn.com:80"),
@@ -78,6 +169,10 @@ fn build_channel(server: &str) -> Result<Channel> {
 async fn main() -> Result<()> {
     tracing_subscriber::fmt::init();
     let cli = Cli::parse();
+
+    let http = reqwest::Client::builder()
+        .timeout(Duration::from_secs(30))
+        .build()?;
 
     let channel = build_channel(&cli.server)?;
     let bearer: MetadataValue<_> = format!("Bearer {}", cli.token).parse()?;
@@ -223,18 +318,11 @@ async fn main() -> Result<()> {
                     );
                     latency_enabled = resp.latency_test_enabled;
                     if resp.should_upgrade {
-                        let server = cli.server.clone();
-                        let token = cli.token.clone();
+                        let http2 = http.clone();
                         tokio::spawn(async move {
-                            info!("upgrade requested, running install script...");
-                            let cmd = format!(
-                                "curl -fsSL https://raw.githubusercontent.com/zzfn/sentinode/main/scripts/install.sh | sh -s -- --server '{}' --token '{}'",
-                                server, token
-                            );
-                            let _ = tokio::process::Command::new("sh")
-                                .arg("-c")
-                                .arg(cmd)
-                                .spawn();
+                            if let Err(e) = self_upgrade(&http2).await {
+                                error!("self-upgrade failed: {e}");
+                            }
                         });
                     }
                     break 'retry;
