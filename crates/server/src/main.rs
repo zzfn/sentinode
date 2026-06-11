@@ -32,10 +32,17 @@ struct MonitorService {
 
 #[async_trait]
 impl Monitor for MonitorService {
-    async fn report(&self, request: Request<ReportRequest>) -> Result<Response<ReportResponse>, Status> {
+    async fn report(
+        &self,
+        request: Request<ReportRequest>,
+    ) -> Result<Response<ReportResponse>, Status> {
         let req = request.into_inner();
-        let node = req.node.ok_or_else(|| Status::invalid_argument("missing node"))?;
-        let m = req.metrics.ok_or_else(|| Status::invalid_argument("missing metrics"))?;
+        let node = req
+            .node
+            .ok_or_else(|| Status::invalid_argument("missing node"))?;
+        let m = req
+            .metrics
+            .ok_or_else(|| Status::invalid_argument("missing metrics"))?;
 
         sqlx::query(
             "INSERT INTO nodes (hostname, ip, os, arch, last_seen)

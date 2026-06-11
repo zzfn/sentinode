@@ -14,7 +14,11 @@ use tracing::{error, info, warn};
 #[command(name = "sentinode-agent")]
 struct Cli {
     /// gRPC 服务端地址（https:// 自动启用 TLS）
-    #[arg(long, env = "SENTINODE_SERVER", default_value = "http://localhost:50051")]
+    #[arg(
+        long,
+        env = "SENTINODE_SERVER",
+        default_value = "http://localhost:50051"
+    )]
     server: String,
 
     /// 认证 token
@@ -47,9 +51,11 @@ async fn main() -> Result<()> {
     });
 
     let hostname = System::host_name().unwrap_or_else(|| "unknown".into());
-    let ip = local_ip().map(|a| a.to_string()).unwrap_or_else(|_| "unknown".into());
+    let ip = local_ip()
+        .map(|a| a.to_string())
+        .unwrap_or_else(|_| "unknown".into());
     let os = System::long_os_version()
-        .or_else(|| System::name())
+        .or_else(System::name)
         .unwrap_or_else(|| "unknown".into());
     let arch = std::env::consts::ARCH.to_string();
 
@@ -122,7 +128,10 @@ async fn main() -> Result<()> {
                 Err(e) => {
                     let delay = Duration::from_secs(2u64.pow(attempt + 1));
                     if attempt < 2 {
-                        warn!("report failed (attempt {}): {e}, retry in {delay:?}", attempt + 1);
+                        warn!(
+                            "report failed (attempt {}): {e}, retry in {delay:?}",
+                            attempt + 1
+                        );
                         tokio::time::sleep(delay).await;
                     } else {
                         error!("report failed after 3 attempts: {e}");
