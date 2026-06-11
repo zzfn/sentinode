@@ -3,7 +3,7 @@
   "private": true,
   "scripts": {
     "dev": "bun server.ts",
-    "build": "bunx @tailwindcss/cli -i ./src/globals.css -o ./dist/globals.css --minify && bun build src/index.tsx --outdir dist --target browser --minify --define \"process.env.API_BASE='${API_BASE:-}'\" && cp index.html favicon.svg _redirects dist/"
+    "build": "bun build.ts"
   },
   "dependencies": {
     "@radix-ui/react-dialog": "^1.1.16",
