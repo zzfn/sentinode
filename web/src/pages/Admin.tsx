@@ -844,36 +844,6 @@ export default function Admin() {
                 </div>
               )}
 
-              {/* Token 列表 */}
-              {tokens.length > 0 && (
-                <div className="space-y-2 pt-2">
-                  <div className="flex items-center gap-2">
-                    <h2 className="text-base font-bold text-[var(--color-ink)]" style={{ fontFamily: "var(--font-display)" }}>
-                      Token 列表
-                    </h2>
-                    <span className="px-2 py-0.5 rounded-full text-xs font-semibold border-2 border-[var(--color-ink)] bg-white">
-                      {tokens.length}
-                    </span>
-                  </div>
-                  <div className="space-y-2">
-                    {tokens.map((t) => (
-                      <div key={t.id} className="bg-white rounded-xl border-2 border-[var(--color-border)] px-4 py-3 flex items-center gap-3">
-                        <span className="w-2 h-2 rounded-full bg-[var(--color-amber)] border border-[var(--color-ink)] flex-shrink-0" />
-                        <div className="flex-1 min-w-0">
-                          <p className="text-sm font-semibold text-[var(--color-ink)]">{t.name}</p>
-                          <p className="text-[10px] font-mono text-[var(--color-muted-foreground)] truncate">{t.token}</p>
-                        </div>
-                        <p className="text-xs text-[var(--color-muted-foreground)] flex-shrink-0 hidden sm:block">
-                          {new Date(t.created_at).toLocaleDateString("zh-CN")}
-                        </p>
-                        <Btn variant="danger" onClick={() => { if (confirm(`确定删除 Token "${t.name}"？`)) handleDeleteToken(t.id); }}>
-                          删除
-                        </Btn>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
             </div>
           )}
 
