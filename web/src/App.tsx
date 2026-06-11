@@ -10,6 +10,7 @@ export default function App() {
       <Route path="/" component={Dashboard} />
       <Route path="/nodes/:id" component={NodeDetail} />
       <Route path="/app" component={Admin} />
+      <Route path="/app/:section" component={Admin} />
       <Route path="/status" component={Status} />
     </Switch>
   );

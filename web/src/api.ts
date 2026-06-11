@@ -227,6 +227,48 @@ export function fmtBandwidth(bytesPerSec: number | null | undefined): string {
   return `${kb.toFixed(0)} KB/s`;
 }
 
+export interface VisitorEntry {
+  ip: string;
+  country_code: string | null;
+  location: string | null;
+  page: string;
+  first_seen: string;
+  last_seen: string;
+}
+
+export interface VisitorStats {
+  total: number;
+  today: number;
+  active_now: number;
+  recent: VisitorEntry[];
+}
+
+export interface BeaconInfo {
+  ip: string;
+  country_code: string | null;
+  location: string | null;
+  today_rank: number;
+  total_rank: number;
+}
+
+export async function sendBeacon(page: string): Promise<BeaconInfo | null> {
+  try {
+    const r = await fetch(`${BASE}/beacon`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ page }),
+    });
+    if (r.ok) return r.json();
+  } catch {}
+  return null;
+}
+
+export async function fetchVisitors(): Promise<VisitorStats> {
+  const r = await fetch(`${BASE}/admin/visitors`);
+  if (!r.ok) throw new Error(`HTTP ${r.status}`);
+  return r.json();
+}
+
 export function countryFlagUrl(code: string | null | undefined): string | null {
   if (!code || code.length !== 2) return null;
   return `https://flagcdn.com/20x15/${code.toLowerCase()}.png`;

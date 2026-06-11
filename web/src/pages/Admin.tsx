@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState } from "react";
-import { Link } from "wouter";
+import { Link, useLocation } from "wouter";
 import {
-  AdminNode, AdminStats, AgentToken, SERVER_URL,
+  AdminNode, AdminStats, AgentToken, SERVER_URL, VisitorEntry, VisitorStats,
   countryFlagUrl, createToken, deleteNode, deleteToken,
-  fetchAdminNodes, fetchAdminStats, fetchTokens,
+  fetchAdminNodes, fetchAdminStats, fetchTokens, fetchVisitors,
   toCNY, toggleLatencyTest, triggerUpgrade, updateNodeMeta,
 } from "../api";
 import { Alert, AlertDescription } from "../components/ui/alert";
@@ -30,7 +30,7 @@ function buildScript(serverUrl: string, token: string): string {
 }
 
 const CURRENCIES = ["CNY", "USD", "EUR", "HKD"];
-type NavItem = "nodes" | "db";
+type NavItem = "nodes" | "visitors" | "db";
 
 // ── 公共样式常量 ──────────────────────────────────────────────────────────────
 
@@ -436,6 +436,149 @@ const DB_ACCENTS = [
   { bg: "var(--color-amber)", label: "Token 数" },
 ];
 
+// ── 访客记录面板 ──────────────────────────────────────────────────────────────
+
+function VisitorsView() {
+  const [stats, setStats] = useState<VisitorStats | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const load = () =>
+      fetchVisitors()
+        .then(setStats)
+        .catch((e) => setError(e instanceof Error ? e.message : String(e)))
+        .finally(() => setLoading(false));
+    load();
+    const t = setInterval(load, 15_000);
+    return () => clearInterval(t);
+  }, []);
+
+  function fmtTime(iso: string) {
+    const d = new Date(iso);
+    const now = Date.now();
+    const diff = now - d.getTime();
+    if (diff < 60_000) return "刚刚";
+    if (diff < 3_600_000) return `${Math.floor(diff / 60_000)} 分钟前`;
+    if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)} 小时前`;
+    return d.toLocaleDateString("zh-CN");
+  }
+
+  if (loading) {
+    return (
+      <div className="space-y-4">
+        {[1, 2, 3].map((i) => (
+          <div key={i} className={`${CARD} h-20 animate-pulse`} />
+        ))}
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="rounded-2xl border-2 border-red-400 bg-red-50 p-5 text-sm text-red-600">
+        错误：{error}
+      </div>
+    );
+  }
+
+  if (!stats) return null;
+
+  const statCards = [
+    { label: "总计访客", value: stats.total, dot: "var(--color-violet)" },
+    { label: "今日访问", value: stats.today, dot: "var(--color-emerald)" },
+    { label: "当前在线", value: stats.active_now, dot: "var(--color-amber)" },
+  ];
+
+  return (
+    <div className="space-y-5">
+      <div className="flex items-center gap-2">
+        <h2 className="text-lg font-bold text-[var(--color-ink)]" style={{ fontFamily: "var(--font-display)" }}>
+          访客记录
+        </h2>
+        <span className="text-xs text-[var(--color-muted-foreground)]">每 15 秒刷新</span>
+      </div>
+
+      {/* 统计卡片 */}
+      <div className="grid grid-cols-3 gap-3">
+        {statCards.map((c) => (
+          <div key={c.label} className={`${CARD} p-4 flex flex-col gap-1`}>
+            <div className="flex items-center gap-1.5">
+              <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: c.dot }} />
+              <span className="text-xs text-[var(--color-muted-foreground)]">{c.label}</span>
+            </div>
+            <span className="text-3xl font-bold text-[var(--color-ink)] tabular-nums" style={{ fontFamily: "var(--font-display)" }}>
+              {c.value}
+            </span>
+          </div>
+        ))}
+      </div>
+
+      {/* 访客列表 */}
+      <div className={`${CARD} overflow-hidden`}>
+        <div className="px-4 py-3 border-b-2 border-[var(--color-ink)] flex items-center gap-2">
+          <span className="text-sm font-bold text-[var(--color-ink)]">近期访客</span>
+          <span className="px-2 py-0.5 rounded-full text-xs font-semibold border-2 border-[var(--color-ink)] bg-white">
+            {stats.recent.length}
+          </span>
+        </div>
+
+        {stats.recent.length === 0 ? (
+          <div className="p-10 text-center text-sm text-[var(--color-muted-foreground)]">
+            暂无访客记录
+          </div>
+        ) : (
+          <div className="divide-y divide-[var(--color-border)]">
+            {stats.recent.map((v: VisitorEntry, i: number) => {
+              const flag = countryFlagUrl(v.country_code);
+              const isActive = Date.now() - new Date(v.last_seen).getTime() < 120_000;
+              return (
+                <div key={i} className="px-4 py-3 flex items-center gap-3 hover:bg-[var(--color-cream)] transition-colors">
+                  {/* 在线状态 */}
+                  {isActive ? (
+                    <span className="relative flex h-2 w-2 flex-shrink-0">
+                      <span className="absolute inline-flex h-full w-full rounded-full opacity-75" style={{ background: "var(--color-emerald)", animation: "ping-slow 1.4s cubic-bezier(0,0,0.2,1) infinite" }} />
+                      <span className="relative inline-flex rounded-full h-2 w-2" style={{ background: "var(--color-emerald)" }} />
+                    </span>
+                  ) : (
+                    <span className="w-2 h-2 rounded-full bg-[var(--color-border)] flex-shrink-0" />
+                  )}
+
+                  {/* 国旗 */}
+                  {flag ? (
+                    <img src={flag} alt={v.country_code ?? ""} className="w-5 h-auto rounded-sm flex-shrink-0" />
+                  ) : (
+                    <span className="w-5 h-4 rounded-sm bg-[var(--color-border)] flex-shrink-0" />
+                  )}
+
+                  {/* IP + 归属地 */}
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <code className="text-xs font-mono text-[var(--color-ink)]">{v.ip}</code>
+                      {v.location && (
+                        <span className="text-xs text-[var(--color-muted-foreground)]">{v.location}</span>
+                      )}
+                    </div>
+                    <div className="text-[10px] text-[var(--color-muted-foreground)] mt-0.5">
+                      <span className="mr-2">{v.page}</span>
+                      <span>首次 {fmtTime(v.first_seen)}</span>
+                    </div>
+                  </div>
+
+                  {/* 最后活跃 */}
+                  <span className="text-xs text-[var(--color-muted-foreground)] flex-shrink-0 tabular-nums">
+                    {fmtTime(v.last_seen)}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function DbStatsView() {
   const [stats, setStats] = useState<AdminStats | null>(null);
   const [loading, setLoading] = useState(true);
@@ -563,7 +706,10 @@ function DbStatsView() {
 
 export default function Admin() {
   const serverUrl = SERVER_URL;
-  const [nav, setNav] = useState<NavItem>("nodes");
+  const [location, navigate] = useLocation();
+  const nav: NavItem =
+    location.startsWith("/app/visitors") ? "visitors" :
+    location.startsWith("/app/db") ? "db" : "nodes";
   const [nodes, setNodes] = useState<AdminNode[]>([]);
   const [tokens, setTokens] = useState<AgentToken[]>([]);
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -642,6 +788,7 @@ export default function Admin() {
 
   const NAV_ITEMS: { key: NavItem; label: string; dot: string }[] = [
     { key: "nodes", label: "节点管理", dot: "var(--color-emerald)" },
+    { key: "visitors", label: "访客记录", dot: "var(--color-amber)" },
     { key: "db", label: "数据统计", dot: "var(--color-violet)" },
   ];
 
@@ -707,7 +854,7 @@ export default function Admin() {
             {NAV_ITEMS.map((item) => (
               <li key={item.key}>
                 <button
-                  onClick={() => setNav(item.key)}
+                  onClick={() => navigate(item.key === "nodes" ? "/app" : `/app/${item.key}`)}
                   className={[
                     "w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-sm font-semibold transition-all duration-150 cursor-pointer text-left border-2",
                     nav === item.key
@@ -849,6 +996,9 @@ export default function Admin() {
 
             </div>
           )}
+
+          {/* 访客记录 */}
+          {nav === "visitors" && <VisitorsView />}
 
           {/* 数据库统计 */}
           {nav === "db" && <DbStatsView />}

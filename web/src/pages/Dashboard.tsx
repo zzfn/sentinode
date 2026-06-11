@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "wouter";
-import { countryFlagUrl, fmtBandwidth, subscribeNodes, type Node } from "../api";
+import { countryFlagUrl, fmtBandwidth, sendBeacon, subscribeNodes, type BeaconInfo, type Node } from "../api";
 
 function isOnline(lastSeen: string): boolean {
   return Date.now() - new Date(lastSeen).getTime() < 2 * 60 * 1000;
@@ -199,6 +199,13 @@ function NodeCard({ node }: { node: Node }) {
 export default function Dashboard() {
   const [nodes, setNodes] = useState<Node[]>([]);
   const [connected, setConnected] = useState(false);
+  const [visitorInfo, setVisitorInfo] = useState<BeaconInfo | null>(null);
+
+  useEffect(() => {
+    sendBeacon("/").then((info) => { if (info) setVisitorInfo(info); });
+    const interval = setInterval(() => sendBeacon("/"), 60_000);
+    return () => clearInterval(interval);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -298,6 +305,33 @@ export default function Dashboard() {
               </div>
             </div>
           </div>
+
+          {/* 访客信息 */}
+          {visitorInfo && (
+            <div className="flex items-center gap-1.5 text-xs text-[var(--color-muted-foreground)] flex-shrink-0">
+              {visitorInfo.country_code && (
+                <img
+                  src={countryFlagUrl(visitorInfo.country_code)!}
+                  alt={visitorInfo.country_code}
+                  className="w-4 h-auto rounded-sm"
+                />
+              )}
+              {visitorInfo.location && (
+                <span className="hidden sm:inline">{visitorInfo.location}</span>
+              )}
+              <code className="hidden md:inline font-mono text-[10px] bg-[var(--color-cream)] border border-[var(--color-border)] px-1 py-0.5 rounded">
+                {visitorInfo.ip}
+              </code>
+              <span className="text-[var(--color-border)]">·</span>
+              <span>
+                今日第 <span className="font-semibold text-[var(--color-ink)]">{visitorInfo.today_rank}</span> 位
+              </span>
+              <span className="text-[var(--color-border)]">·</span>
+              <span>
+                历史第 <span className="font-semibold text-[var(--color-ink)]">{visitorInfo.total_rank}</span> 位
+              </span>
+            </div>
+          )}
 
         </div>
       </header>

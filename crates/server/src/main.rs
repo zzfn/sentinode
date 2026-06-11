@@ -1,9 +1,9 @@
 use anyhow::Result;
 use axum::{
     extract::{Path, Query, State},
-    http::StatusCode,
+    http::{HeaderMap, StatusCode},
     response::sse::{Event, KeepAlive, Sse},
-    routing::{get, put},
+    routing::{get, post, put},
     Json, Router,
 };
 use chrono::{DateTime, Utc};
@@ -559,6 +559,70 @@ struct CreateTokenReq {
     name: String,
 }
 
+// ── 访客追踪相关类型 ──────────────────────────────────────────────────────────
+
+#[derive(FromRow)]
+struct VisitorRow {
+    #[allow(dead_code)]
+    id: i64,
+    ip: String,
+    country_code: Option<String>,
+    location: Option<String>,
+    page: String,
+    first_seen: DateTime<Utc>,
+    last_seen: DateTime<Utc>,
+}
+
+#[derive(Serialize)]
+struct VisitorEntry {
+    ip: String,
+    country_code: Option<String>,
+    location: Option<String>,
+    page: String,
+    first_seen: DateTime<Utc>,
+    last_seen: DateTime<Utc>,
+}
+
+#[derive(Serialize)]
+struct VisitorStatsResp {
+    total: i64,
+    today: i64,
+    active_now: i64,
+    recent: Vec<VisitorEntry>,
+}
+
+#[derive(Deserialize)]
+struct BeaconReq {
+    page: String,
+}
+
+#[derive(Serialize)]
+struct BeaconResp {
+    ip: String,
+    country_code: Option<String>,
+    location: Option<String>,
+    today_rank: i64,
+    total_rank: i64,
+}
+
+fn extract_client_ip(headers: &HeaderMap) -> String {
+    headers
+        .get("cf-connecting-ip")
+        .or_else(|| headers.get("x-forwarded-for"))
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.split(',').next().unwrap_or(s).trim().to_string())
+        .unwrap_or_else(|| "unknown".to_string())
+}
+
+fn is_private_ip(ip: &str) -> bool {
+    ip == "unknown"
+        || ip.starts_with("127.")
+        || ip.starts_with("10.")
+        || ip.starts_with("192.168.")
+        || ip.starts_with("172.")
+        || ip == "::1"
+}
+
 // ── REST 处理函数 ─────────────────────────────────────────────────────────────
 
 async fn get_node(
@@ -610,6 +674,140 @@ async fn sse_events(
         .filter_map(|msg| msg.ok().map(|data| Ok(Event::default().data(data))));
 
     Sse::new(snapshot_stream.chain(live_stream)).keep_alive(KeepAlive::default())
+}
+
+async fn record_beacon(
+    State(s): State<AppState>,
+    headers: HeaderMap,
+    Json(req): Json<BeaconReq>,
+) -> Result<Json<BeaconResp>, StatusCode> {
+    let ip = extract_client_ip(&headers);
+    let page = req.page.chars().take(200).collect::<String>();
+
+    // UPSERT：同一 IP 只保留一条记录，每次访问更新 last_seen
+    let new_id = s.id_gen.lock().unwrap().next();
+    let row: Option<(i64, Option<String>, Option<String>)> = sqlx::query_as(
+        "INSERT INTO visitors (id, ip, page, first_seen, last_seen)
+         VALUES ($1, $2, $3, NOW(), NOW())
+         ON CONFLICT (ip) DO UPDATE
+           SET last_seen = NOW(), page = EXCLUDED.page
+         RETURNING id, country_code, location",
+    )
+    .bind(new_id)
+    .bind(&ip)
+    .bind(&page)
+    .fetch_optional(&s.db)
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    let (vid, country_code, location) = row.unwrap_or((new_id, None, None));
+
+    // GeoIP（异步，首次无 country_code 时触发）
+    if country_code.is_none() && !is_private_ip(&ip) {
+        let pool = s.db.clone();
+        let ip_clone = ip.clone();
+        tokio::spawn(async move {
+            if let Ok(resp) = reqwest::Client::builder()
+                .timeout(Duration::from_secs(5))
+                .build()
+                .unwrap()
+                .get(format!(
+                    "http://ip-api.com/json/{}?fields=status,countryCode,country,city&lang=zh-CN",
+                    ip_clone
+                ))
+                .send()
+                .await
+            {
+                if let Ok(data) = resp.json::<serde_json::Value>().await {
+                    if data["status"] == "success" {
+                        let cc = data["countryCode"].as_str().unwrap_or("").to_string();
+                        let city = data["city"].as_str().unwrap_or("").to_string();
+                        let country = data["country"].as_str().unwrap_or("").to_string();
+                        let loc = if city.is_empty() {
+                            country
+                        } else {
+                            format!("{} {}", country, city)
+                        };
+                        let _ = sqlx::query(
+                            "UPDATE visitors SET country_code=$1, location=$2 WHERE id=$3 AND country_code IS NULL",
+                        )
+                        .bind(&cc)
+                        .bind(&loc)
+                        .bind(vid)
+                        .execute(&pool)
+                        .await;
+                    }
+                }
+            }
+        });
+    }
+
+    // 访客排名
+    let total_rank: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM visitors")
+        .fetch_one(&s.db)
+        .await
+        .unwrap_or(1);
+
+    let today_rank: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM visitors WHERE last_seen::date = CURRENT_DATE")
+            .fetch_one(&s.db)
+            .await
+            .unwrap_or(1);
+
+    Ok(Json(BeaconResp {
+        ip,
+        country_code,
+        location,
+        today_rank,
+        total_rank,
+    }))
+}
+
+async fn admin_visitors(State(s): State<AppState>) -> Result<Json<VisitorStatsResp>, StatusCode> {
+    let total: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM visitors")
+        .fetch_one(&s.db)
+        .await
+        .unwrap_or(0);
+
+    let today: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM visitors WHERE last_seen::date = CURRENT_DATE")
+            .fetch_one(&s.db)
+            .await
+            .unwrap_or(0);
+
+    let active_now: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM visitors WHERE last_seen > NOW() - INTERVAL '2 minutes'",
+    )
+    .fetch_one(&s.db)
+    .await
+    .unwrap_or(0);
+
+    let rows = sqlx::query_as::<_, VisitorRow>(
+        "SELECT id, ip, country_code, location, page, first_seen, last_seen
+         FROM visitors ORDER BY last_seen DESC LIMIT 100",
+    )
+    .fetch_all(&s.db)
+    .await
+    .unwrap_or_default();
+
+    let recent = rows
+        .into_iter()
+        .map(|r| VisitorEntry {
+            ip: r.ip,
+            country_code: r.country_code,
+            location: r.location,
+            page: r.page,
+            first_seen: r.first_seen,
+            last_seen: r.last_seen,
+        })
+        .collect();
+
+    Ok(Json(VisitorStatsResp {
+        total,
+        today,
+        active_now,
+        recent,
+    }))
 }
 
 async fn healthz() -> &'static str {
@@ -1250,6 +1448,26 @@ async fn init_schema(pool: &PgPool) -> Result<()> {
         .await
         .ok();
 
+    // 访客追踪表（按 IP 去重）
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS visitors (
+            id         BIGINT PRIMARY KEY,
+            ip         TEXT NOT NULL UNIQUE,
+            country_code TEXT,
+            location   TEXT,
+            page       TEXT NOT NULL DEFAULT '/',
+            first_seen TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            last_seen  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )",
+    )
+    .execute(pool)
+    .await
+    .ok();
+    sqlx::query("CREATE INDEX IF NOT EXISTS idx_visitors_last_seen ON visitors(last_seen DESC)")
+        .execute(pool)
+        .await
+        .ok();
+
     Ok(())
 }
 
@@ -1370,6 +1588,8 @@ async fn main() -> Result<()> {
             axum::routing::post(trigger_upgrade),
         )
         .route("/api/admin/stats", get(admin_stats))
+        .route("/api/admin/visitors", get(admin_visitors))
+        .route("/api/beacon", post(record_beacon))
         .route("/api/status", get(public_status))
         .with_state(AppState {
             db: pool,

@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link } from "wouter";
-import { countryFlagUrl, fetchStatus, type StatusNode } from "../api";
+import { countryFlagUrl, fetchStatus, sendBeacon, type StatusNode } from "../api";
 
 function UptimeBar({ days }: { days: { date: string; up: boolean }[] }) {
   return (
@@ -92,6 +92,12 @@ export default function Status() {
   const [nodes, setNodes] = useState<StatusNode[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    sendBeacon("/status");
+    const interval = setInterval(() => sendBeacon("/status"), 60_000);
+    return () => clearInterval(interval);
+  }, []);
 
   useEffect(() => {
     fetchStatus()
