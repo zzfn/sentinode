@@ -94,6 +94,14 @@ async fn main() -> Result<()> {
         .or_else(System::name)
         .unwrap_or_else(|| "unknown".into());
     let arch = std::env::consts::ARCH.to_string();
+    let cpu_model = {
+        let mut s = System::new();
+        s.refresh_cpu_list(sysinfo::CpuRefreshKind::nothing());
+        s.cpus()
+            .first()
+            .map(|c| c.brand().to_owned())
+            .unwrap_or_default()
+    };
 
     info!("agent started: {} ({}) → {}", hostname, ip, cli.server);
 
@@ -139,6 +147,7 @@ async fn main() -> Result<()> {
                 os: os.clone(),
                 arch: arch.clone(),
                 uptime_secs: System::uptime(),
+                cpu_model: cpu_model.clone(),
             }),
             metrics: Some(Metrics {
                 cpu_percent: sys.global_cpu_usage(),

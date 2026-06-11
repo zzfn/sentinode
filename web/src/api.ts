@@ -9,6 +9,7 @@ export interface Node {
   hostname: string;
   os: string;
   arch: string;
+  cpu_model: string | null;
   last_seen: string;
   website_url: string | null;
   latency_cu_ms: number | null;

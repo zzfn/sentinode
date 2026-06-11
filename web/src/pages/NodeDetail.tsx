@@ -157,7 +157,7 @@ export default function NodeDetail() {
             {/* 统计卡片 */}
             {latest && (
               <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
-                <StatCard label="CPU 使用率" value={`${latest.cpu_percent.toFixed(1)}%`} />
+                <StatCard label="CPU 使用率" value={`${latest.cpu_percent.toFixed(1)}%`} sub={node?.cpu_model ?? undefined} />
                 <StatCard label="内存" value={fmtBytes(latest.mem_used)} sub={`共 ${fmtBytes(latest.mem_total)}`} />
                 <StatCard label="交换分区" value={fmtBytes(latest.swap_used)} sub={`共 ${fmtBytes(latest.swap_total)}`} />
                 <StatCard label="负载 1m" value={latest.load1.toFixed(2)} />

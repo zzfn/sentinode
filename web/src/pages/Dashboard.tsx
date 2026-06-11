@@ -150,7 +150,10 @@ export default function Dashboard() {
                               )}
                             </TableCell>
                           ))}
-                          <TableCell className="text-sm">{n.os}</TableCell>
+                          <TableCell className="text-sm">
+                            <div>{n.os}</div>
+                            {n.cpu_model && <div className="text-xs text-[var(--color-muted-foreground)] truncate max-w-[180px]">{n.cpu_model}</div>}
+                          </TableCell>
                           <TableCell className="text-xs text-[var(--color-muted-foreground)] whitespace-nowrap">
                             {new Date(n.last_seen).toLocaleString("zh-CN")}
                           </TableCell>

@@ -143,12 +143,13 @@ impl Monitor for MonitorService {
         };
 
         let node_id: i64 = sqlx::query(
-            "INSERT INTO nodes (id, hostname, ip, os, arch, last_seen, token_id)
-             VALUES ($1, $2, $3, $4, $5, NOW(), $6)
+            "INSERT INTO nodes (id, hostname, ip, os, arch, last_seen, token_id, cpu_model)
+             VALUES ($1, $2, $3, $4, $5, NOW(), $6, $7)
              ON CONFLICT (hostname) DO UPDATE
              SET ip = EXCLUDED.ip, os = EXCLUDED.os, arch = EXCLUDED.arch,
                  last_seen = NOW(),
-                 token_id = COALESCE(EXCLUDED.token_id, nodes.token_id)
+                 token_id = COALESCE(EXCLUDED.token_id, nodes.token_id),
+                 cpu_model = COALESCE(NULLIF(EXCLUDED.cpu_model, ''), nodes.cpu_model)
              RETURNING id",
         )
         .bind(self.next_id())
@@ -157,6 +158,11 @@ impl Monitor for MonitorService {
         .bind(&node.os)
         .bind(&node.arch)
         .bind(token_id)
+        .bind(if node.cpu_model.is_empty() {
+            None
+        } else {
+            Some(&node.cpu_model)
+        })
         .fetch_one(&self.db)
         .await
         .map_err(|e| Status::internal(e.to_string()))?
@@ -217,7 +223,7 @@ impl Monitor for MonitorService {
 
         // 查询完整节点信息（用于广播和返回开关状态）
         let row = sqlx::query_as::<_, NodeRow>(
-            "SELECT id, hostname, ip, os, arch, last_seen, expires_at, price, price_currency, website_url, latency_test_enabled, latency_cu_ms, latency_cm_ms, latency_ct_ms, latency_updated_at, NULL::BIGINT AS token_id, NULL::TEXT AS token_name, NULL::TEXT AS token_value FROM nodes WHERE id = $1",
+            "SELECT id, hostname, ip, os, arch, last_seen, expires_at, price, price_currency, website_url, latency_test_enabled, latency_cu_ms, latency_cm_ms, latency_ct_ms, latency_updated_at, NULL::BIGINT AS token_id, NULL::TEXT AS token_name, NULL::TEXT AS token_value, n.cpu_model FROM nodes WHERE id = $1",
         )
         .bind(node_id)
         .fetch_one(&self.db)
@@ -299,6 +305,7 @@ struct NodeRow {
     token_id: Option<i64>,
     token_name: Option<String>,
     token_value: Option<String>,
+    cpu_model: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -307,6 +314,7 @@ struct NodeResponse {
     hostname: String,
     os: String,
     arch: String,
+    cpu_model: Option<String>,
     last_seen: DateTime<Utc>,
     website_url: Option<String>,
     latency_cu_ms: Option<f32>,
@@ -322,6 +330,7 @@ impl From<NodeRow> for NodeResponse {
             hostname: r.hostname,
             os: r.os,
             arch: r.arch,
+            cpu_model: r.cpu_model.clone(),
             last_seen: r.last_seen,
             website_url: r.website_url,
             latency_cu_ms: r.latency_cu_ms,
@@ -432,7 +441,7 @@ async fn get_node(
 ) -> Result<Json<NodeResponse>, StatusCode> {
     let id: i64 = id.parse().map_err(|_| StatusCode::BAD_REQUEST)?;
     let row = sqlx::query_as::<_, NodeRow>(
-        "SELECT id, hostname, ip, os, arch, last_seen, expires_at, price, price_currency, website_url, latency_test_enabled, latency_cu_ms, latency_cm_ms, latency_ct_ms, latency_updated_at, NULL::BIGINT AS token_id, NULL::TEXT AS token_name, NULL::TEXT AS token_value FROM nodes WHERE id = $1",
+        "SELECT id, hostname, ip, os, arch, last_seen, expires_at, price, price_currency, website_url, latency_test_enabled, latency_cu_ms, latency_cm_ms, latency_ct_ms, latency_updated_at, NULL::BIGINT AS token_id, NULL::TEXT AS token_name, NULL::TEXT AS token_value, n.cpu_model FROM nodes WHERE id = $1",
     )
     .bind(id)
     .fetch_optional(&s.db)
@@ -452,7 +461,7 @@ async fn sse_events(
         "SELECT n.id, n.hostname, n.ip, n.os, n.arch, n.last_seen, n.expires_at,
                 n.price, n.price_currency, n.website_url, n.latency_test_enabled,
                 n.latency_cu_ms, n.latency_cm_ms, n.latency_ct_ms, n.latency_updated_at,
-                n.token_id, NULL::TEXT AS token_name, NULL::TEXT AS token_value
+                n.token_id, NULL::TEXT AS token_name, NULL::TEXT AS token_value, n.cpu_model
          FROM nodes n ORDER BY n.last_seen DESC",
     )
     .fetch_all(&s.db)
@@ -585,6 +594,7 @@ struct AdminNodeResponse {
     token_id: Option<String>,
     token_name: Option<String>,
     token: Option<String>,
+    cpu_model: Option<String>,
 }
 
 impl From<NodeRow> for AdminNodeResponse {
@@ -608,6 +618,7 @@ impl From<NodeRow> for AdminNodeResponse {
             token_id: r.token_id.map(|id| id.to_string()),
             token_name: r.token_name,
             token: r.token_value,
+            cpu_model: r.cpu_model,
         }
     }
 }
@@ -860,6 +871,9 @@ async fn init_schema(pool: &PgPool) -> Result<()> {
     )
     .execute(pool)
     .await?;
+    sqlx::query("ALTER TABLE nodes ADD COLUMN IF NOT EXISTS cpu_model TEXT")
+        .execute(pool)
+        .await?;
 
     Ok(())
 }
