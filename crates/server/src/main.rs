@@ -1075,6 +1075,7 @@ async fn delete_node(
 
 #[derive(Deserialize)]
 struct UpdateNodeMetaReq {
+    name: Option<String>,
     expires_at: Option<DateTime<Utc>>,
     price: Option<f32>,
     price_currency: Option<String>,
@@ -1091,11 +1092,14 @@ async fn update_node_meta(
 ) -> Result<StatusCode, StatusCode> {
     let id: i64 = id.parse().map_err(|_| StatusCode::BAD_REQUEST)?;
     sqlx::query(
-        "UPDATE nodes SET expires_at=$1, price=$2, price_currency=$3, website_url=$4,
-         latency_test_enabled=COALESCE($5,latency_test_enabled),
-         country_code=COALESCE($6,country_code), location=COALESCE($7,location)
-         WHERE id=$8",
+        "UPDATE nodes SET
+         name=COALESCE($1,name),
+         expires_at=$2, price=$3, price_currency=$4, website_url=$5,
+         latency_test_enabled=COALESCE($6,latency_test_enabled),
+         country_code=COALESCE($7,country_code), location=COALESCE($8,location)
+         WHERE id=$9",
     )
+    .bind(req.name.as_deref().filter(|s| !s.is_empty()))
     .bind(req.expires_at)
     .bind(req.price)
     .bind(req.price_currency)

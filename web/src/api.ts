@@ -242,7 +242,7 @@ export async function fetchAdminStats(): Promise<AdminStats> {
 
 export async function updateNodeMeta(
   id: string,
-  data: { expires_at?: string | null; price?: number | null; price_currency?: string | null; website_url?: string | null; country_code?: string | null; location?: string | null },
+  data: { name?: string | null; expires_at?: string | null; price?: number | null; price_currency?: string | null; website_url?: string | null; country_code?: string | null; location?: string | null },
 ): Promise<void> {
   const r = await fetch(`${BASE}/admin/nodes/${id}`, {
     method: "PUT",

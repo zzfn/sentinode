@@ -79,6 +79,7 @@ function EditNodeDialog({
   onClose: () => void;
   onSaved: (updated: Partial<AdminNode>) => void;
 }) {
+  const [nodeName, setNodeName] = useState("");
   const [expiresAt, setExpiresAt] = useState("");
   const [price, setPrice] = useState("");
   const [currency, setCurrency] = useState("CNY");
@@ -91,6 +92,7 @@ function EditNodeDialog({
 
   useEffect(() => {
     if (!node) return;
+    setNodeName(node.name ?? "");
     setExpiresAt(node.expires_at ? node.expires_at.slice(0, 10) : "");
     setPrice(node.price != null ? String(node.price) : "");
     setCurrency(node.price_currency ?? "CNY");
@@ -118,6 +120,7 @@ function EditNodeDialog({
     setError(null);
     try {
       const payload = {
+        name: nodeName.trim() || null,
         expires_at: expiresAt ? new Date(expiresAt).toISOString() : null,
         price: price ? parseFloat(price) : null,
         price_currency: price ? currency : null,
@@ -152,6 +155,10 @@ function EditNodeDialog({
         {error && <Alert variant="destructive"><AlertDescription>{error}</AlertDescription></Alert>}
 
         <div className="space-y-3">
+          <div className="space-y-1.5">
+            <Label className="text-xs font-semibold text-[var(--color-muted-foreground)] uppercase tracking-wider">显示名称</Label>
+            <Input placeholder={node.hostname} value={nodeName} onChange={(e) => setNodeName(e.target.value)} />
+          </div>
           <div className="space-y-1.5">
             <Label className="text-xs font-semibold text-[var(--color-muted-foreground)] uppercase tracking-wider">官网地址</Label>
             <Input type="url" placeholder="https://example.com" value={websiteUrl} onChange={(e) => setWebsiteUrl(e.target.value)} />
