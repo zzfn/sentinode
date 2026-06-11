@@ -268,12 +268,13 @@ function ReinstallDialog({
 type DialogStep = "name" | "script" | "success";
 
 function AddAgentDialog({
-  open, onClose, serverUrl, onTokenCreated,
+  open, onClose, serverUrl, onTokenCreated, onNodeConnected,
 }: {
   open: boolean;
   onClose: () => void;
   serverUrl: string;
   onTokenCreated: (tok: AgentToken) => void;
+  onNodeConnected: () => void;
 }) {
   const [step, setStep] = useState<DialogStep>("name");
   const [name, setName] = useState("");
@@ -313,6 +314,7 @@ function AddAgentDialog({
           const connectedNode = nodes.find((n) => n.token === tok.token && n.hostname && n.connected);
           if (connectedNode) {
             clearInterval(pollRef.current!); pollRef.current = null;
+            onNodeConnected();
             setConnectedHostname(connectedNode.hostname); setStep("success");
           }
         } catch {}
@@ -743,6 +745,10 @@ export default function Admin() {
     setTokens((prev) => [tok, ...prev]);
   }
 
+  function handleNodeConnected() {
+    fetchAdminNodes().then(setNodes).catch(() => {});
+  }
+
   function handleNodeSaved(id: string, updated: Partial<AdminNode>) {
     setNodes((prev) => prev.map((n) => n.id === id ? { ...n, ...updated } : n));
     const node = nodes.find((n) => n.id === id);
@@ -1019,6 +1025,7 @@ export default function Admin() {
         onClose={() => setDialogOpen(false)}
         serverUrl={serverUrl}
         onTokenCreated={handleTokenCreated}
+        onNodeConnected={handleNodeConnected}
       />
 
       <EditNodeDialog

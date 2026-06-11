@@ -125,6 +125,13 @@ impl Monitor for MonitorService {
             .and_then(|v| v.strip_prefix("Bearer "))
             .map(|s| s.to_owned());
 
+        // 优先读 CF-Connecting-IP（Cloudflare 注入的真实客户端 IP），回退到 agent 自报 IP
+        let cf_ip: Option<String> = request
+            .metadata()
+            .get("cf-connecting-ip")
+            .and_then(|v| v.to_str().ok())
+            .map(|s| s.to_owned());
+
         let req = request.into_inner();
         let node = req
             .node
@@ -132,6 +139,8 @@ impl Monitor for MonitorService {
         let m = req
             .metrics
             .ok_or_else(|| Status::invalid_argument("missing metrics"))?;
+
+        let ip = cf_ip.as_deref().unwrap_or(&node.ip);
 
         // 先尝试认领 pending token 槽位（admin 创建 token 时预插的 hostname IS NULL 行）
         let claimed_id: Option<i64> = if let Some(ref tok) = token_val {
@@ -143,7 +152,7 @@ impl Monitor for MonitorService {
                  RETURNING id",
             )
             .bind(&node.hostname)
-            .bind(&node.ip)
+            .bind(ip)
             .bind(&node.os)
             .bind(&node.arch)
             .bind(if node.cpu_model.is_empty() {
@@ -177,7 +186,7 @@ impl Monitor for MonitorService {
             )
             .bind(self.next_id())
             .bind(&node.hostname)
-            .bind(&node.ip)
+            .bind(ip)
             .bind(&node.os)
             .bind(&node.arch)
             .bind(token_val.as_deref())
