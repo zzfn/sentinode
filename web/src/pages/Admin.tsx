@@ -49,6 +49,8 @@ function EditNodeDialog({
   const [currency, setCurrency] = useState("CNY");
   const [websiteUrl, setWebsiteUrl] = useState("");
   const [saving, setSaving] = useState(false);
+  const [countryCode, setCountryCode] = useState("");
+  const [location, setLocation] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [cnyPreview, setCnyPreview] = useState<string | null>(null);
 
@@ -58,6 +60,8 @@ function EditNodeDialog({
     setPrice(node.price != null ? String(node.price) : "");
     setCurrency(node.price_currency ?? "CNY");
     setWebsiteUrl(node.website_url ?? "");
+    setCountryCode(node.country_code ?? "");
+    setLocation(node.location ?? "");
     setError(null);
     setCnyPreview(null);
   }, [node]);
@@ -83,6 +87,8 @@ function EditNodeDialog({
         price: price ? parseFloat(price) : null,
         price_currency: price ? currency : null,
         website_url: websiteUrl.trim() || null,
+        country_code: countryCode.trim() || null,
+        location: location.trim() || null,
       };
       await updateNodeMeta(node.id, payload);
       onSaved({ ...payload, expires_at: payload.expires_at });
@@ -109,6 +115,14 @@ function EditNodeDialog({
           <div className="space-y-1.5">
             <Label>官网地址</Label>
             <Input type="url" placeholder="https://example.com" value={websiteUrl} onChange={(e) => setWebsiteUrl(e.target.value)} />
+          </div>
+          <div className="space-y-1.5">
+            <Label>国家/地区代码</Label>
+            <Input placeholder="如: HK JP US" value={countryCode} onChange={(e) => setCountryCode(e.target.value)} maxLength={2} />
+          </div>
+          <div className="space-y-1.5">
+            <Label>地区名称</Label>
+            <Input placeholder="如: 香港 东京" value={location} onChange={(e) => setLocation(e.target.value)} />
           </div>
           <div className="space-y-1.5">
             <Label>到期时间</Label>
@@ -629,7 +643,15 @@ export default function Admin() {
                             : null;
                           return (
                             <TableRow key={n.id}>
-                              <TableCell className="font-medium">{n.hostname}</TableCell>
+                              <TableCell className="font-medium">
+                                <div className="flex items-center gap-1.5">
+                                  {n.country_code && (
+                                    <span>{Array.from(n.country_code.toUpperCase()).map(c => String.fromCodePoint(c.charCodeAt(0) + 0x1f1e6 - 65)).join("")}</span>
+                                  )}
+                                  {n.hostname}
+                                </div>
+                                {n.location && <div className="text-xs text-[var(--color-muted-foreground)]">{n.location}</div>}
+                              </TableCell>
                               <TableCell>
                                 <code className="text-xs font-mono bg-muted px-1.5 py-0.5 rounded">{n.ip}</code>
                               </TableCell>

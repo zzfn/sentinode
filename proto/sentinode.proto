@@ -34,6 +34,9 @@ message Metrics {
   float  load15      = 8;
   repeated DiskStat disks    = 9;
   repeated NetStat  networks = 10;
+  uint64 net_rx_rate     = 11;
+  uint64 net_tx_rate     = 12;
+  uint32 tcp_connections = 13;
 }
 
 message LatencyResult {

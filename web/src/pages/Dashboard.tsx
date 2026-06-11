@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useLocation } from "wouter";
-import { subscribeNodes, type Node } from "../api";
+import { countryFlag, fmtBandwidth, subscribeNodes, type Node } from "../api";
 
 function isOnline(lastSeen: string): boolean {
   return Date.now() - new Date(lastSeen).getTime() < 2 * 60 * 1000;
@@ -124,6 +124,17 @@ function NodeCard({ node }: { node: Node }) {
 
       {/* 主机名 */}
       <div>
+        {/* 国旗 + 地区 */}
+        {(node.country_code || node.location) && (
+          <div className="flex items-center gap-1.5 mb-1">
+            {node.country_code && (
+              <span className="text-base leading-none">{countryFlag(node.country_code)}</span>
+            )}
+            {node.location && (
+              <span className="text-xs text-[var(--color-muted-foreground)]">{node.location}</span>
+            )}
+          </div>
+        )}
         <h2
           className="text-lg font-bold leading-tight text-[var(--color-ink)] break-all"
           style={{ fontFamily: "var(--font-display)" }}
@@ -161,6 +172,14 @@ function NodeCard({ node }: { node: Node }) {
             bg="var(--color-amber)"
             dark
           />
+        </div>
+      )}
+
+      {/* 实时带宽 */}
+      {(node.net_rx_rate != null || node.net_tx_rate != null) && (
+        <div className="flex gap-3 text-xs font-mono">
+          <span className="text-[var(--color-emerald)]">↓ {fmtBandwidth(node.net_rx_rate)}</span>
+          <span style={{ color: "var(--color-violet)" }}>↑ {fmtBandwidth(node.net_tx_rate)}</span>
         </div>
       )}
 

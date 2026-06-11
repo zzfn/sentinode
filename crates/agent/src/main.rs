@@ -105,6 +105,9 @@ async fn main() -> Result<()> {
 
     info!("agent started: {} ({}) → {}", hostname, ip, cli.server);
 
+    let mut prev_net: (u64, u64) = (0, 0); // (rx_total, tx_total) 所有非回环接口累计
+    let mut prev_net_time = std::time::Instant::now();
+
     let mut sys = System::new();
     let mut latency_enabled = false;
     let mut pending_latencies: Vec<LatencyResult> = vec![];
@@ -126,7 +129,47 @@ async fn main() -> Result<()> {
             })
             .collect();
 
-        let networks: Vec<NetStat> = Networks::new_with_refreshed_list()
+        let nets = Networks::new_with_refreshed_list();
+        let elapsed = prev_net_time.elapsed().as_secs_f64().max(0.5);
+        let (rx_total, tx_total) = nets
+            .iter()
+            .filter(|(iface, _)| !iface.starts_with("lo"))
+            .fold((0u64, 0u64), |(rx, tx), (_, d)| {
+                (rx + d.total_received(), tx + d.total_transmitted())
+            });
+        let net_rx_rate: u64 = if prev_net != (0, 0) {
+            (rx_total.saturating_sub(prev_net.0) as f64 / elapsed) as u64
+        } else {
+            0
+        };
+        let net_tx_rate: u64 = if prev_net != (0, 0) {
+            (tx_total.saturating_sub(prev_net.1) as f64 / elapsed) as u64
+        } else {
+            0
+        };
+        prev_net = (rx_total, tx_total);
+        prev_net_time = std::time::Instant::now();
+
+        let tcp_connections: u32 = {
+            #[cfg(target_os = "linux")]
+            {
+                fn count_state(path: &str) -> usize {
+                    std::fs::read_to_string(path)
+                        .unwrap_or_default()
+                        .lines()
+                        .skip(1)
+                        .filter(|l| l.split_whitespace().nth(3) == Some("01"))
+                        .count()
+                }
+                (count_state("/proc/net/tcp") + count_state("/proc/net/tcp6")) as u32
+            }
+            #[cfg(not(target_os = "linux"))]
+            {
+                0u32
+            }
+        };
+
+        let networks: Vec<NetStat> = nets
             .iter()
             .map(|(iface, data)| NetStat {
                 interface: iface.clone(),
@@ -160,6 +203,9 @@ async fn main() -> Result<()> {
                 load15: load.fifteen as f32,
                 disks,
                 networks,
+                net_rx_rate,
+                net_tx_rate,
+                tcp_connections,
             }),
             timestamp: ts,
             latencies: std::mem::take(&mut pending_latencies),

@@ -16,8 +16,10 @@ import {
   type ChartConfig,
 } from "../components/ui/chart";
 import {
+  countryFlag,
   fetchMetrics,
   fetchNode,
+  fmtBandwidth,
   fmtBytes,
   fmtUptime,
   subscribeNodeDetail,
@@ -195,12 +197,19 @@ export default function NodeDetail() {
           m.latency_ct_ms != null && m.latency_ct_ms >= 0
             ? parseFloat(m.latency_ct_ms.toFixed(1))
             : null,
+        rxMbps: m.net_rx_rate != null && m.net_rx_rate > 0 ? parseFloat((m.net_rx_rate / 1024 / 1024).toFixed(2)) : null,
+        txMbps: m.net_tx_rate != null && m.net_tx_rate > 0 ? parseFloat((m.net_tx_rate / 1024 / 1024).toFixed(2)) : null,
       })),
     [metrics],
   );
 
   const hasLatencyHistory = useMemo(
     () => chartData.some((d) => d.cu != null || d.cm != null || d.ct != null),
+    [chartData],
+  );
+
+  const hasBandwidthHistory = useMemo(
+    () => chartData.some((d) => d.rxMbps != null || d.txMbps != null),
     [chartData],
   );
 
@@ -279,6 +288,11 @@ export default function NodeDetail() {
                   <span className="h-2.5 w-2.5 rounded-full bg-red-400 flex-shrink-0" />
                 )}
               </>
+            )}
+            {node?.country_code && (
+              <span className="text-base leading-none flex-shrink-0">
+                {countryFlag(node.country_code)}
+              </span>
             )}
             <h1
               className="text-base font-bold text-[var(--color-ink)] truncate"
@@ -361,6 +375,18 @@ export default function NodeDetail() {
                     sub: `共 ${fmtBytes(latest.swap_total)}`,
                   },
                   {
+                    label: "下行带宽",
+                    value: fmtBandwidth(latest.net_rx_rate),
+                  },
+                  {
+                    label: "上行带宽",
+                    value: fmtBandwidth(latest.net_tx_rate),
+                  },
+                  {
+                    label: "TCP 连接数",
+                    value: latest.tcp_connections != null ? String(latest.tcp_connections) : "—",
+                  },
+                  {
                     label: "负载 1m",
                     value: latest.load1.toFixed(2),
                   },
@@ -378,7 +404,7 @@ export default function NodeDetail() {
                     label={label}
                     value={value}
                     sub={sub}
-                    accent={ACCENTS[i]}
+                    accent={ACCENTS[i % ACCENTS.length]}
                   />
                 ))}
               </div>
@@ -660,6 +686,28 @@ export default function NodeDetail() {
                           strokeWidth={2}
                           connectNulls={false}
                         />
+                      </LineChart>
+                    </ChartContainer>
+                  </ChartCard>
+                )}
+
+                {/* 网络带宽趋势 */}
+                {hasBandwidthHistory && (
+                  <ChartCard title="网络带宽" sub="MB/s" accent={ACCENTS[0]}>
+                    <ChartContainer
+                      config={{
+                        rxMbps: { label: "下行", color: "hsl(var(--chart-5))" },
+                        txMbps: { label: "上行", color: "hsl(var(--chart-1))" },
+                      } satisfies ChartConfig}
+                      className="w-full"
+                    >
+                      <LineChart data={chartData} margin={{ top: 4, right: 8, bottom: 0, left: 0 }}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="rgba(128,128,128,0.12)" />
+                        <XAxis dataKey="time" tick={{ fontSize: 10 }} interval="preserveStartEnd" />
+                        <YAxis tick={{ fontSize: 10 }} width={46} unit=" MB/s" />
+                        <ChartTooltip content={<ChartTooltipContent formatter={(v) => [`${v} MB/s`]} />} />
+                        <Line type="monotone" dataKey="rxMbps" stroke="var(--color-rxMbps)" dot={false} strokeWidth={2} connectNulls={false} />
+                        <Line type="monotone" dataKey="txMbps" stroke="var(--color-txMbps)" dot={false} strokeWidth={2} connectNulls={false} />
                       </LineChart>
                     </ChartContainer>
                   </ChartCard>

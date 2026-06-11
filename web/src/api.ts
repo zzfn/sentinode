@@ -16,9 +16,14 @@ export interface Node {
   latency_cm_ms: number | null;
   latency_ct_ms: number | null;
   latency_updated_at: string | null;
+  net_rx_rate: number | null;
+  net_tx_rate: number | null;
+  country_code: string | null;
+  location: string | null;
 }
 
 export interface AdminNode extends Node {
+  // country_code 和 location 继承自 Node
   ip: string;
   price: number | null;
   price_currency: string | null;
@@ -70,6 +75,9 @@ export interface Metric {
   latency_cu_ms: number | null;
   latency_cm_ms: number | null;
   latency_ct_ms: number | null;
+  net_rx_rate: number | null;
+  net_tx_rate: number | null;
+  tcp_connections: number | null;
 }
 
 export interface AgentToken {
@@ -201,7 +209,7 @@ export async function fetchAdminStats(): Promise<AdminStats> {
 
 export async function updateNodeMeta(
   id: string,
-  data: { expires_at?: string | null; price?: number | null; price_currency?: string | null; website_url?: string | null },
+  data: { expires_at?: string | null; price?: number | null; price_currency?: string | null; website_url?: string | null; country_code?: string | null; location?: string | null },
 ): Promise<void> {
   const r = await fetch(`${BASE}/admin/nodes/${id}`, {
     method: "PUT",
@@ -209,4 +217,38 @@ export async function updateNodeMeta(
     body: JSON.stringify(data),
   });
   if (!r.ok) throw new Error(`HTTP ${r.status}`);
+}
+
+export function fmtBandwidth(bytesPerSec: number | null | undefined): string {
+  if (bytesPerSec == null || bytesPerSec <= 0) return "—";
+  const mb = bytesPerSec / 1024 / 1024;
+  if (mb >= 1) return `${mb.toFixed(1)} MB/s`;
+  const kb = bytesPerSec / 1024;
+  return `${kb.toFixed(0)} KB/s`;
+}
+
+export function countryFlag(code: string | null | undefined): string {
+  if (!code || code.length !== 2) return "";
+  const offset = 0x1f1e6 - 65;
+  return Array.from(code.toUpperCase())
+    .map((c) => String.fromCodePoint(c.charCodeAt(0) + offset))
+    .join("");
+}
+
+export interface StatusNode {
+  id: string;
+  hostname: string;
+  country_code: string | null;
+  location: string | null;
+  online: boolean;
+  uptime_30d: number;
+  uptime_90d: number;
+  days: { date: string; up: boolean }[];
+}
+
+export async function fetchStatus(): Promise<StatusNode[]> {
+  const r = await fetch(`${BASE}/status`);
+  if (!r.ok) throw new Error(`HTTP ${r.status}`);
+  const data = await r.json();
+  return data.nodes as StatusNode[];
 }

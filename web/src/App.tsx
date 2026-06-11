@@ -2,6 +2,7 @@ import { Route, Switch } from "wouter";
 import Admin from "./pages/Admin";
 import Dashboard from "./pages/Dashboard";
 import NodeDetail from "./pages/NodeDetail";
+import Status from "./pages/Status";
 
 export default function App() {
   return (
@@ -9,6 +10,7 @@ export default function App() {
       <Route path="/" component={Dashboard} />
       <Route path="/nodes/:id" component={NodeDetail} />
       <Route path="/app" component={Admin} />
+      <Route path="/status" component={Status} />
     </Switch>
   );
 }
