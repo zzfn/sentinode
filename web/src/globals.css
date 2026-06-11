@@ -1,3 +1,4 @@
+@import url("https://fonts.googleapis.com/css2?family=Outfit:wght@700;800&family=Plus+Jakarta+Sans:wght@400;500;600&display=swap");
 @import "tailwindcss";
 
 @theme {
@@ -28,6 +29,17 @@
   --chart-3: 187 85% 43%;
   --chart-4: 38 92% 50%;
   --chart-5: 142 71% 45%;
+
+  /* Playful Geometric 扩展 token */
+  --color-cream: #FFFDF5;
+  --color-ink: #1E293B;
+  --color-violet: #8B5CF6;
+  --color-pink: #F472B6;
+  --color-amber: #FBBF24;
+  --color-emerald: #34D399;
+
+  --font-display: "Outfit", system-ui, sans-serif;
+  --font-body: "Plus Jakarta Sans", system-ui, sans-serif;
 }
 
 * {
@@ -37,5 +49,9 @@
 body {
   background-color: var(--color-background);
   color: var(--color-foreground);
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  font-family: var(--font-body), -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+}
+
+@keyframes ping-slow {
+  75%, 100% { transform: scale(2.2); opacity: 0; }
 }
