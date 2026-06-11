@@ -692,6 +692,7 @@ async fn record_beacon(
 
     // UPSERT：同一 IP 只保留一条记录，每次访问更新 last_seen
     let new_id = s.id_gen.lock().unwrap().next();
+    #[allow(clippy::type_complexity)]
     let row: Option<(
         i64,
         Option<String>,
