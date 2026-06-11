@@ -171,7 +171,6 @@ struct AppState {
     db: PgPool,
     id_gen: Arc<Mutex<SnowflakeGen>>,
     token_set: Arc<std::sync::RwLock<HashSet<String>>>,
-    global_token: String,
 }
 
 #[derive(FromRow)]
@@ -515,13 +514,11 @@ async fn main() -> Result<()> {
     let http_pool = pool.clone();
     let http_id_gen = id_gen.clone();
     let http_token_set = token_set.clone();
-    let http_global_token = cli.token.clone();
     tokio::spawn(async move {
         let app_state = AppState {
             db: http_pool,
             id_gen: http_id_gen,
             token_set: http_token_set,
-            global_token: http_global_token,
         };
         let app = Router::new()
             .route("/healthz", get(healthz))
