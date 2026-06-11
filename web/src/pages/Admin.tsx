@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link } from "wouter";
-import { AgentToken, createToken, deleteToken, fetchTokens } from "../api";
+import { AgentToken, SERVER_URL, createToken, deleteToken, fetchTokens } from "../api";
 
 const INSTALL_SCRIPT_URL =
   "https://raw.githubusercontent.com/zzfn/sentinode/main/scripts/install.sh";
@@ -13,11 +13,7 @@ function buildScript(serverUrl: string, token: string): string {
 }
 
 export default function Admin() {
-  // gRPC 服务器地址，持久化到 localStorage
-  const [serverUrl, setServerUrl] = useState<string>(
-    () =>
-      localStorage.getItem("sentinode_server_url") ?? "http://localhost:50051"
-  );
+  const serverUrl = SERVER_URL;
 
   // 已注册的 token 列表
   const [tokens, setTokens] = useState<AgentToken[]>([]);
@@ -40,12 +36,6 @@ export default function Admin() {
       .then(setTokens)
       .catch((e: Error) => setError(e.message));
   }, []);
-
-  // 当 serverUrl 变化时同步到 localStorage
-  function handleServerUrlChange(val: string) {
-    setServerUrl(val);
-    localStorage.setItem("sentinode_server_url", val);
-  }
 
   // 提交添加 Agent
   async function handleCreate() {
@@ -116,29 +106,6 @@ export default function Admin() {
           {error}
         </div>
       )}
-
-      {/* gRPC 服务器地址 */}
-      <section style={{ marginBottom: 32 }}>
-        <h2 style={{ fontSize: 16, fontWeight: 600, marginBottom: 10 }}>gRPC 服务器地址</h2>
-        <input
-          type="text"
-          value={serverUrl}
-          onChange={(e) => handleServerUrlChange(e.target.value)}
-          style={{
-            width: "100%",
-            maxWidth: 400,
-            padding: "8px 12px",
-            border: "1px solid #d1d5db",
-            borderRadius: 6,
-            fontSize: 14,
-            boxSizing: "border-box",
-          }}
-          placeholder="http://localhost:50051"
-        />
-        <p style={{ fontSize: 12, color: "#6b7280", marginTop: 6 }}>
-          安装脚本中 SENTINODE_SERVER 将使用此地址
-        </p>
-      </section>
 
       {/* 已注册 Agent 列表 */}
       <section style={{ marginBottom: 32 }}>

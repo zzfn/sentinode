@@ -28,7 +28,8 @@ export interface AgentToken {
   created_at: string;
 }
 
-const BASE = (process.env.API_BASE ?? "") + "/api";
+export const SERVER_URL = process.env.API_BASE ?? "";
+const BASE = SERVER_URL + "/api";
 
 async function checkResponse(res: Response): Promise<Response> {
   if (!res.ok) {
