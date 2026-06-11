@@ -34,7 +34,7 @@ struct Cli {
 fn build_channel(server: &str) -> Result<Channel> {
     let mut endpoint = Channel::from_shared(server.to_owned())?;
     if server.starts_with("https://") {
-        endpoint = endpoint.tls_config(ClientTlsConfig::new())?;
+        endpoint = endpoint.tls_config(ClientTlsConfig::new().with_enabled_roots())?;
     }
     Ok(endpoint.connect_lazy())
 }
