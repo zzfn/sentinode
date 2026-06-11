@@ -243,7 +243,7 @@ function AddAgentDialog({
                 <pre className="bg-[#1e1e1e] text-[#d4d4d4] rounded-lg p-4 pr-20 overflow-x-auto text-xs leading-relaxed whitespace-pre font-mono">{script}</pre>
                 <Button variant={copied ? "secondary" : "outline"} size="sm" className="absolute top-2 right-2" onClick={handleCopy}>{copied ? "已复制" : "复制"}</Button>
               </div>
-              <div className="flex items-center gap-2 text-sm text-muted-foreground">
+              <div className="flex items-center gap-2 text-sm text-[var(--color-muted-foreground)]">
                 <div className="w-4 h-4 rounded-full border-2 border-primary border-t-transparent animate-spin flex-shrink-0" />
                 等待 Agent 连接中…
               </div>
@@ -261,7 +261,7 @@ function AddAgentDialog({
                     <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
                   </svg>
                 </div>
-                <p className="text-sm text-muted-foreground text-center">
+                <p className="text-sm text-[var(--color-muted-foreground)] text-center">
                   节点 <span className="font-semibold text-foreground">{connectedHostname}</span> 已成功连接
                 </p>
               </div>
@@ -570,19 +570,19 @@ export default function Admin() {
                                 {n.expires_at ? (
                                   <span className={daysLeft != null && daysLeft <= 7 ? "text-destructive font-medium" : daysLeft != null && daysLeft <= 30 ? "text-[var(--color-warning)] font-medium" : ""}>
                                     {new Date(n.expires_at).toLocaleDateString("zh-CN")}
-                                    {daysLeft != null && <span className="ml-1 text-xs text-muted-foreground">({daysLeft < 0 ? "已过期" : `${daysLeft}天`})</span>}
+                                    {daysLeft != null && <span className="ml-1 text-xs text-[var(--color-muted-foreground)]">({daysLeft < 0 ? "已过期" : `${daysLeft}天`})</span>}
                                   </span>
-                                ) : <span className="text-muted-foreground">—</span>}
+                                ) : <span className="text-[var(--color-muted-foreground)]">—</span>}
                               </TableCell>
                               <TableCell className="text-sm">
                                 {n.price != null ? (
                                   <span>
                                     {n.price} {n.price_currency}
                                     {cny != null && n.price_currency !== "CNY" && (
-                                      <span className="ml-1 text-xs text-muted-foreground">≈ ¥{cny.toFixed(0)}</span>
+                                      <span className="ml-1 text-xs text-[var(--color-muted-foreground)]">≈ ¥{cny.toFixed(0)}</span>
                                     )}
                                   </span>
-                                ) : <span className="text-muted-foreground">—</span>}
+                                ) : <span className="text-[var(--color-muted-foreground)]">—</span>}
                               </TableCell>
                               <TableCell>
                                 <Switch
@@ -624,7 +624,7 @@ export default function Admin() {
                 </CardHeader>
                 <CardContent>
                   {tokens.length === 0 ? (
-                    <p className="text-sm text-muted-foreground py-4 text-center">暂无已注册的 Agent，点击右上角添加</p>
+                    <p className="text-sm text-[var(--color-muted-foreground)] py-4 text-center">暂无已注册的 Agent，点击右上角添加</p>
                   ) : (
                     <Table>
                       <TableHeader>
@@ -642,7 +642,7 @@ export default function Admin() {
                             <TableCell>
                               <code className="text-xs font-mono bg-muted px-1.5 py-0.5 rounded break-all">{tok.token}</code>
                             </TableCell>
-                            <TableCell className="text-muted-foreground text-xs whitespace-nowrap">
+                            <TableCell className="text-[var(--color-muted-foreground)] text-xs whitespace-nowrap">
                               {new Date(tok.created_at).toLocaleString("zh-CN")}
                             </TableCell>
                             <TableCell>
