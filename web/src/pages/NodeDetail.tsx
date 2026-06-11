@@ -6,7 +6,6 @@ import {
   CartesianGrid,
   Line,
   LineChart,
-  Tooltip,
   XAxis,
   YAxis,
 } from "recharts";
@@ -25,28 +24,90 @@ import {
   type Metric,
   type Node,
 } from "../api";
-import { Alert, AlertDescription } from "../components/ui/alert";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "../components/ui/card";
 
 const MAX_POINTS = 60;
 
-function StatCard({ label, value, sub }: { label: string; value: string; sub?: string }) {
+// 循环使用的强调色
+const ACCENTS = [
+  { bg: "#8B5CF6", fg: "#fff" },  // violet
+  { bg: "#F472B6", fg: "#fff" },  // pink
+  { bg: "#FBBF24", fg: "#1E293B" }, // amber
+  { bg: "#34D399", fg: "#1E293B" }, // emerald
+  { bg: "#8B5CF6", fg: "#fff" },
+  { bg: "#F472B6", fg: "#fff" },
+];
+
+function StatCard({
+  label,
+  value,
+  sub,
+  accent,
+}: {
+  label: string;
+  value: string;
+  sub?: string;
+  accent: { bg: string; fg: string };
+}) {
   return (
-    <Card>
-      <CardHeader className="pb-2">
-        <CardDescription>{label}</CardDescription>
-      </CardHeader>
-      <CardContent>
-        <p className="text-2xl font-bold">{value}</p>
-        {sub && <p className="text-xs text-[var(--color-muted-foreground)] mt-1">{sub}</p>}
-      </CardContent>
-    </Card>
+    <div
+      className="bg-white rounded-2xl border-2 border-[var(--color-ink)] p-4
+        shadow-[3px_3px_0_0_#1E293B] flex flex-col gap-1"
+    >
+      <div className="flex items-center gap-1.5">
+        <span
+          className="w-2 h-2 rounded-full flex-shrink-0"
+          style={{ background: accent.bg }}
+        />
+        <span className="text-[11px] font-semibold uppercase tracking-widest text-[var(--color-muted-foreground)]">
+          {label}
+        </span>
+      </div>
+      <p
+        className="text-2xl font-bold text-[var(--color-ink)] leading-tight"
+        style={{ fontFamily: "var(--font-display)" }}
+      >
+        {value}
+      </p>
+      {sub && (
+        <p className="text-xs text-[var(--color-muted-foreground)] leading-snug truncate">
+          {sub}
+        </p>
+      )}
+    </div>
+  );
+}
+
+function ChartCard({
+  title,
+  sub,
+  accent,
+  children,
+}: {
+  title: string;
+  sub?: string;
+  accent: { bg: string; fg: string };
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="bg-white rounded-2xl border-2 border-[var(--color-ink)] overflow-hidden shadow-[4px_4px_0_0_#1E293B]">
+      <div
+        className="px-5 py-3 border-b-2 border-[var(--color-ink)] flex items-center gap-2"
+        style={{ background: accent.bg }}
+      >
+        <h3
+          className="font-bold text-sm leading-none"
+          style={{ color: accent.fg, fontFamily: "var(--font-display)" }}
+        >
+          {title}
+        </h3>
+        {sub && (
+          <span className="text-xs opacity-70" style={{ color: accent.fg }}>
+            {sub}
+          </span>
+        )}
+      </div>
+      <div className="p-4">{children}</div>
+    </div>
   );
 }
 
@@ -64,6 +125,10 @@ function fmtTime(iso: string): string {
   });
 }
 
+function isOnline(lastSeen: string): boolean {
+  return Date.now() - new Date(lastSeen).getTime() < 2 * 60 * 1000;
+}
+
 export default function NodeDetail() {
   const { id } = useParams<{ id: string }>();
   const [node, setNode] = useState<Node | null>(null);
@@ -77,7 +142,10 @@ export default function NodeDetail() {
 
     Promise.all([fetchNode(id), fetchMetrics(id)])
       .then(([n, data]) => {
-        if (!cancelled) { setNode(n); setMetrics(data); }
+        if (!cancelled) {
+          setNode(n);
+          setMetrics(data);
+        }
       })
       .catch((e) => {
         if (!cancelled) setError(e instanceof Error ? e.message : String(e));
@@ -86,7 +154,6 @@ export default function NodeDetail() {
         if (!cancelled) setLoading(false);
       });
 
-    // SSE 实时追加，新数据插到数组头部，保持最多 MAX_POINTS 条
     const unsub = subscribeNodeDetail(id, (m) => {
       if (cancelled) return;
       setMetrics((prev) => [m, ...prev].slice(0, MAX_POINTS));
@@ -100,205 +167,502 @@ export default function NodeDetail() {
 
   const latest = metrics[0];
 
-  // 图表数据从旧到新排列（x 轴时间递增）
   const chartData = useMemo(
     () =>
       [...metrics].reverse().map((m) => ({
         time: fmtTime(m.reported_at),
         cpu: parseFloat(m.cpu_percent.toFixed(1)),
-        memPct: m.mem_total > 0 ? parseFloat(((m.mem_used / m.mem_total) * 100).toFixed(1)) : 0,
-        swapPct: m.swap_total > 0 ? parseFloat(((m.swap_used / m.swap_total) * 100).toFixed(1)) : 0,
+        memPct:
+          m.mem_total > 0
+            ? parseFloat(((m.mem_used / m.mem_total) * 100).toFixed(1))
+            : 0,
+        swapPct:
+          m.swap_total > 0
+            ? parseFloat(((m.swap_used / m.swap_total) * 100).toFixed(1))
+            : 0,
         load1: parseFloat(m.load1.toFixed(2)),
         load5: parseFloat(m.load5.toFixed(2)),
         load15: parseFloat(m.load15.toFixed(2)),
-        cu: m.latency_cu_ms != null && m.latency_cu_ms >= 0 ? parseFloat(m.latency_cu_ms.toFixed(1)) : null,
-        cm: m.latency_cm_ms != null && m.latency_cm_ms >= 0 ? parseFloat(m.latency_cm_ms.toFixed(1)) : null,
-        ct: m.latency_ct_ms != null && m.latency_ct_ms >= 0 ? parseFloat(m.latency_ct_ms.toFixed(1)) : null,
+        cu:
+          m.latency_cu_ms != null && m.latency_cu_ms >= 0
+            ? parseFloat(m.latency_cu_ms.toFixed(1))
+            : null,
+        cm:
+          m.latency_cm_ms != null && m.latency_cm_ms >= 0
+            ? parseFloat(m.latency_cm_ms.toFixed(1))
+            : null,
+        ct:
+          m.latency_ct_ms != null && m.latency_ct_ms >= 0
+            ? parseFloat(m.latency_ct_ms.toFixed(1))
+            : null,
       })),
     [metrics],
   );
 
-  // 只要有任意延迟历史数据就显示图表
   const hasLatencyHistory = useMemo(
     () => chartData.some((d) => d.cu != null || d.cm != null || d.ct != null),
     [chartData],
   );
 
+  const online = node ? isOnline(node.last_seen) : false;
+  const hasCurrentLatency =
+    node &&
+    (node.latency_cu_ms != null ||
+      node.latency_cm_ms != null ||
+      node.latency_ct_ms != null);
+
   return (
-    <div className="min-h-screen bg-[var(--color-background)]">
-      <header className="border-b border-[var(--color-border)] bg-[var(--color-card)]">
-        <div className="max-w-5xl mx-auto px-4 h-14 flex items-center gap-3">
+    <div className="min-h-screen" style={{ background: "var(--color-cream)" }}>
+      {/* ── Header ── */}
+      <header className="relative overflow-hidden border-b-2 border-[var(--color-ink)] bg-white">
+        {/* 装饰 */}
+        <div
+          className="absolute -top-6 -right-6 w-32 h-32 rounded-full opacity-10 pointer-events-none"
+          style={{ background: "var(--color-violet)" }}
+        />
+        <div
+          className="absolute top-2 right-24 w-5 h-5 rounded-full opacity-30 pointer-events-none"
+          style={{ background: "var(--color-emerald)" }}
+        />
+
+        <div className="relative max-w-5xl mx-auto px-5 py-4 flex items-center gap-3">
+          {/* 返回按钮 */}
           <Link
             href="/"
-            className="text-sm text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)] transition-colors"
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold
+              border-2 border-[var(--color-ink)] bg-white text-[var(--color-ink)]
+              shadow-[2px_2px_0_0_#1E293B]
+              hover:bg-[var(--color-amber)] hover:shadow-[3px_3px_0_0_#1E293B] hover:-translate-x-px hover:-translate-y-px
+              transition-all duration-150 flex-shrink-0"
           >
-            ← 返回
+            <svg
+              viewBox="0 0 16 16"
+              fill="none"
+              className="w-3 h-3"
+              stroke="currentColor"
+              strokeWidth={2.5}
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                d="M10 3L5 8l5 5"
+              />
+            </svg>
+            返回
           </Link>
-          <span className="text-[var(--color-border)]">|</span>
-          <h1 className="text-base font-semibold">{node?.hostname ?? id}</h1>
+
+          <span
+            className="w-px h-5 flex-shrink-0"
+            style={{ background: "var(--color-border)" }}
+          />
+
+          {/* 主机名 + 状态 */}
+          <div className="flex items-center gap-2 min-w-0">
+            {node && (
+              <>
+                {online ? (
+                  <span className="relative flex h-2.5 w-2.5 flex-shrink-0">
+                    <span
+                      className="absolute inline-flex h-full w-full rounded-full opacity-75"
+                      style={{
+                        background: "var(--color-emerald)",
+                        animation:
+                          "ping-slow 1.4s cubic-bezier(0,0,0.2,1) infinite",
+                      }}
+                    />
+                    <span
+                      className="relative inline-flex rounded-full h-2.5 w-2.5"
+                      style={{ background: "var(--color-emerald)" }}
+                    />
+                  </span>
+                ) : (
+                  <span className="h-2.5 w-2.5 rounded-full bg-red-400 flex-shrink-0" />
+                )}
+              </>
+            )}
+            <h1
+              className="text-base font-bold text-[var(--color-ink)] truncate"
+              style={{ fontFamily: "var(--font-display)" }}
+            >
+              {node?.hostname ?? id}
+            </h1>
+            {node && (
+              <span className="hidden sm:block text-xs text-[var(--color-muted-foreground)] truncate">
+                {node.os}
+              </span>
+            )}
+          </div>
         </div>
       </header>
 
-      <main className="max-w-5xl mx-auto px-4 py-8 space-y-6">
+      <main className="max-w-5xl mx-auto px-5 py-7 space-y-6">
         {loading ? (
-          <div className="flex items-center justify-center py-20">
-            <p className="text-[var(--color-muted-foreground)]">加载中…</p>
+          /* 骨架 */
+          <div className="space-y-5">
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
+              {[...Array(6)].map((_, i) => (
+                <div
+                  key={i}
+                  className="h-24 rounded-2xl border-2 border-[var(--color-border)] bg-white animate-pulse"
+                  style={{ opacity: 1 - i * 0.12 }}
+                />
+              ))}
+            </div>
+            <div className="h-56 rounded-2xl border-2 border-[var(--color-border)] bg-white animate-pulse" />
           </div>
         ) : error ? (
-          <Alert variant="destructive">
-            <AlertDescription>错误：{error}</AlertDescription>
-          </Alert>
+          <div
+            className="rounded-2xl border-2 border-red-400 bg-red-50 p-5 text-sm text-red-600"
+          >
+            错误：{error}
+          </div>
         ) : (
           <>
-            {/* 三网延迟 */}
-            {node && (node.latency_cu_ms != null || node.latency_cm_ms != null || node.latency_ct_ms != null) && (
+            {/* 三网当前延迟 */}
+            {hasCurrentLatency && (
               <div className="grid grid-cols-3 gap-4">
-                <StatCard
-                  label="上海联通"
-                  value={fmtLatency(node.latency_cu_ms)}
-                  sub={node.latency_updated_at ? `更新于 ${new Date(node.latency_updated_at).toLocaleTimeString("zh-CN")}` : undefined}
-                />
-                <StatCard label="上海移动" value={fmtLatency(node.latency_cm_ms)} />
-                <StatCard label="上海电信" value={fmtLatency(node.latency_ct_ms)} />
+                {[
+                  { label: "上海联通", ms: node!.latency_cu_ms, accent: ACCENTS[0] },
+                  { label: "上海移动", ms: node!.latency_cm_ms, accent: ACCENTS[1] },
+                  { label: "上海电信", ms: node!.latency_ct_ms, accent: ACCENTS[2] },
+                ].map(({ label, ms, accent }) => (
+                  <StatCard
+                    key={label}
+                    label={label}
+                    value={fmtLatency(ms)}
+                    sub={
+                      label === "上海联通" && node!.latency_updated_at
+                        ? `更新 ${new Date(node!.latency_updated_at).toLocaleTimeString("zh-CN")}`
+                        : undefined
+                    }
+                    accent={accent}
+                  />
+                ))}
               </div>
             )}
 
-            {/* 统计卡片 */}
+            {/* 系统统计 */}
             {latest && (
               <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
-                <StatCard label="CPU 使用率" value={`${latest.cpu_percent.toFixed(1)}%`} sub={node?.cpu_model ?? undefined} />
-                <StatCard label="内存" value={fmtBytes(latest.mem_used)} sub={`共 ${fmtBytes(latest.mem_total)}`} />
-                <StatCard label="交换分区" value={fmtBytes(latest.swap_used)} sub={`共 ${fmtBytes(latest.swap_total)}`} />
-                <StatCard label="负载 1m" value={latest.load1.toFixed(2)} />
-                <StatCard label="负载 5m / 15m" value={`${latest.load5.toFixed(2)} / ${latest.load15.toFixed(2)}`} />
-                <StatCard label="运行时长" value={fmtUptime(latest.uptime_secs)} />
+                {[
+                  {
+                    label: "CPU 使用率",
+                    value: `${latest.cpu_percent.toFixed(1)}%`,
+                    sub: node?.cpu_model ?? undefined,
+                  },
+                  {
+                    label: "内存",
+                    value: fmtBytes(latest.mem_used),
+                    sub: `共 ${fmtBytes(latest.mem_total)}`,
+                  },
+                  {
+                    label: "交换分区",
+                    value: fmtBytes(latest.swap_used),
+                    sub: `共 ${fmtBytes(latest.swap_total)}`,
+                  },
+                  {
+                    label: "负载 1m",
+                    value: latest.load1.toFixed(2),
+                  },
+                  {
+                    label: "负载 5m / 15m",
+                    value: `${latest.load5.toFixed(2)} / ${latest.load15.toFixed(2)}`,
+                  },
+                  {
+                    label: "运行时长",
+                    value: fmtUptime(latest.uptime_secs),
+                  },
+                ].map(({ label, value, sub }, i) => (
+                  <StatCard
+                    key={label}
+                    label={label}
+                    value={value}
+                    sub={sub}
+                    accent={ACCENTS[i]}
+                  />
+                ))}
               </div>
             )}
 
-            {/* 图表区 */}
+            {/* 图表 */}
             {metrics.length === 0 ? (
-              <Card>
-                <CardContent className="py-12 text-center text-sm text-[var(--color-muted-foreground)]">
-                  暂无数据
-                </CardContent>
-              </Card>
+              <div className="rounded-2xl border-2 border-[var(--color-border)] bg-white p-12 text-center text-sm text-[var(--color-muted-foreground)]">
+                暂无数据
+              </div>
             ) : (
-              <div className="space-y-4">
+              <div className="space-y-5">
                 {/* CPU */}
-                <Card>
-                  <CardHeader>
-                    <CardTitle>CPU 使用率</CardTitle>
-                    <CardDescription>最近 {metrics.length} 条，实时更新</CardDescription>
-                  </CardHeader>
-                  <CardContent>
-                    <ChartContainer config={{ cpu: { label: "CPU", color: "hsl(var(--chart-1))" } }} className="w-full">
-                      <AreaChart data={chartData} margin={{ top: 4, right: 8, bottom: 0, left: 0 }}>
-                        <defs>
-                          <linearGradient id="cpuGrad" x1="0" y1="0" x2="0" y2="1">
-                            <stop offset="5%" stopColor="var(--color-cpu)" stopOpacity={0.25} />
-                            <stop offset="95%" stopColor="var(--color-cpu)" stopOpacity={0} />
-                          </linearGradient>
-                        </defs>
-                        <CartesianGrid strokeDasharray="3 3" stroke="rgba(128,128,128,0.15)" />
-                        <XAxis dataKey="time" tick={{ fontSize: 10 }} interval="preserveStartEnd" />
-                        <YAxis domain={[0, 100]} tickFormatter={(v) => `${v}%`} tick={{ fontSize: 10 }} width={38} />
-                        <ChartTooltip content={<ChartTooltipContent formatter={(v) => [`${v}%`]} />} />
-                        <Area type="monotone" dataKey="cpu" stroke="var(--color-cpu)" fill="url(#cpuGrad)" dot={false} strokeWidth={1.5} />
-                      </AreaChart>
-                    </ChartContainer>
-                  </CardContent>
-                </Card>
-
-                {/* 内存 & 交换 */}
-                <Card>
-                  <CardHeader>
-                    <CardTitle>内存使用率</CardTitle>
-                  </CardHeader>
-                  <CardContent>
-                    <ChartContainer
-                      config={{
-                        memPct: { label: "内存", color: "hsl(var(--chart-2))" },
-                        swapPct: { label: "交换", color: "hsl(var(--chart-3))" },
-                      } satisfies ChartConfig}
-                      className="w-full"
+                <ChartCard
+                  title="CPU 使用率"
+                  sub={`最近 ${metrics.length} 条 · 实时`}
+                  accent={ACCENTS[0]}
+                >
+                  <ChartContainer
+                    config={{ cpu: { label: "CPU", color: "hsl(var(--chart-1))" } }}
+                    className="w-full"
+                  >
+                    <AreaChart
+                      data={chartData}
+                      margin={{ top: 4, right: 8, bottom: 0, left: 0 }}
                     >
-                      <AreaChart data={chartData} margin={{ top: 4, right: 8, bottom: 0, left: 0 }}>
-                        <defs>
-                          <linearGradient id="memGrad" x1="0" y1="0" x2="0" y2="1">
-                            <stop offset="5%" stopColor="var(--color-memPct)" stopOpacity={0.25} />
-                            <stop offset="95%" stopColor="var(--color-memPct)" stopOpacity={0} />
-                          </linearGradient>
-                          <linearGradient id="swapGrad" x1="0" y1="0" x2="0" y2="1">
-                            <stop offset="5%" stopColor="var(--color-swapPct)" stopOpacity={0.2} />
-                            <stop offset="95%" stopColor="var(--color-swapPct)" stopOpacity={0} />
-                          </linearGradient>
-                        </defs>
-                        <CartesianGrid strokeDasharray="3 3" stroke="rgba(128,128,128,0.15)" />
-                        <XAxis dataKey="time" tick={{ fontSize: 10 }} interval="preserveStartEnd" />
-                        <YAxis domain={[0, 100]} tickFormatter={(v) => `${v}%`} tick={{ fontSize: 10 }} width={38} />
-                        <ChartTooltip content={<ChartTooltipContent formatter={(v) => [`${v}%`]} />} />
-                        <Area type="monotone" dataKey="memPct" stroke="var(--color-memPct)" fill="url(#memGrad)" dot={false} strokeWidth={1.5} />
-                        <Area type="monotone" dataKey="swapPct" stroke="var(--color-swapPct)" fill="url(#swapGrad)" dot={false} strokeWidth={1.5} />
-                      </AreaChart>
-                    </ChartContainer>
-                  </CardContent>
-                </Card>
+                      <defs>
+                        <linearGradient id="cpuGrad" x1="0" y1="0" x2="0" y2="1">
+                          <stop
+                            offset="5%"
+                            stopColor="var(--color-cpu)"
+                            stopOpacity={0.3}
+                          />
+                          <stop
+                            offset="95%"
+                            stopColor="var(--color-cpu)"
+                            stopOpacity={0}
+                          />
+                        </linearGradient>
+                      </defs>
+                      <CartesianGrid
+                        strokeDasharray="3 3"
+                        stroke="rgba(128,128,128,0.12)"
+                      />
+                      <XAxis
+                        dataKey="time"
+                        tick={{ fontSize: 10 }}
+                        interval="preserveStartEnd"
+                      />
+                      <YAxis
+                        domain={[0, 100]}
+                        tickFormatter={(v) => `${v}%`}
+                        tick={{ fontSize: 10 }}
+                        width={38}
+                      />
+                      <ChartTooltip
+                        content={
+                          <ChartTooltipContent
+                            formatter={(v) => [`${v}%`]}
+                          />
+                        }
+                      />
+                      <Area
+                        type="monotone"
+                        dataKey="cpu"
+                        stroke="var(--color-cpu)"
+                        fill="url(#cpuGrad)"
+                        dot={false}
+                        strokeWidth={2}
+                      />
+                    </AreaChart>
+                  </ChartContainer>
+                </ChartCard>
+
+                {/* 内存 */}
+                <ChartCard title="内存使用率" accent={ACCENTS[1]}>
+                  <ChartContainer
+                    config={{
+                      memPct: { label: "内存", color: "hsl(var(--chart-2))" },
+                      swapPct: { label: "交换", color: "hsl(var(--chart-3))" },
+                    } satisfies ChartConfig}
+                    className="w-full"
+                  >
+                    <AreaChart
+                      data={chartData}
+                      margin={{ top: 4, right: 8, bottom: 0, left: 0 }}
+                    >
+                      <defs>
+                        <linearGradient
+                          id="memGrad"
+                          x1="0"
+                          y1="0"
+                          x2="0"
+                          y2="1"
+                        >
+                          <stop
+                            offset="5%"
+                            stopColor="var(--color-memPct)"
+                            stopOpacity={0.3}
+                          />
+                          <stop
+                            offset="95%"
+                            stopColor="var(--color-memPct)"
+                            stopOpacity={0}
+                          />
+                        </linearGradient>
+                        <linearGradient
+                          id="swapGrad"
+                          x1="0"
+                          y1="0"
+                          x2="0"
+                          y2="1"
+                        >
+                          <stop
+                            offset="5%"
+                            stopColor="var(--color-swapPct)"
+                            stopOpacity={0.2}
+                          />
+                          <stop
+                            offset="95%"
+                            stopColor="var(--color-swapPct)"
+                            stopOpacity={0}
+                          />
+                        </linearGradient>
+                      </defs>
+                      <CartesianGrid
+                        strokeDasharray="3 3"
+                        stroke="rgba(128,128,128,0.12)"
+                      />
+                      <XAxis
+                        dataKey="time"
+                        tick={{ fontSize: 10 }}
+                        interval="preserveStartEnd"
+                      />
+                      <YAxis
+                        domain={[0, 100]}
+                        tickFormatter={(v) => `${v}%`}
+                        tick={{ fontSize: 10 }}
+                        width={38}
+                      />
+                      <ChartTooltip
+                        content={
+                          <ChartTooltipContent
+                            formatter={(v) => [`${v}%`]}
+                          />
+                        }
+                      />
+                      <Area
+                        type="monotone"
+                        dataKey="memPct"
+                        stroke="var(--color-memPct)"
+                        fill="url(#memGrad)"
+                        dot={false}
+                        strokeWidth={2}
+                      />
+                      <Area
+                        type="monotone"
+                        dataKey="swapPct"
+                        stroke="var(--color-swapPct)"
+                        fill="url(#swapGrad)"
+                        dot={false}
+                        strokeWidth={2}
+                      />
+                    </AreaChart>
+                  </ChartContainer>
+                </ChartCard>
 
                 {/* 系统负载 */}
-                <Card>
-                  <CardHeader>
-                    <CardTitle>系统负载</CardTitle>
-                  </CardHeader>
-                  <CardContent>
-                    <ChartContainer
-                      config={{
-                        load1: { label: "1m", color: "hsl(var(--chart-4))" },
-                        load5: { label: "5m", color: "hsl(var(--chart-5))" },
-                        load15: { label: "15m", color: "hsl(262 83% 58%)" },
-                      } satisfies ChartConfig}
-                      className="w-full"
+                <ChartCard title="系统负载" accent={ACCENTS[2]}>
+                  <ChartContainer
+                    config={{
+                      load1: { label: "1m", color: "hsl(var(--chart-4))" },
+                      load5: { label: "5m", color: "hsl(var(--chart-5))" },
+                      load15: { label: "15m", color: "hsl(262 83% 58%)" },
+                    } satisfies ChartConfig}
+                    className="w-full"
+                  >
+                    <LineChart
+                      data={chartData}
+                      margin={{ top: 4, right: 8, bottom: 0, left: 0 }}
                     >
-                      <LineChart data={chartData} margin={{ top: 4, right: 8, bottom: 0, left: 0 }}>
-                        <CartesianGrid strokeDasharray="3 3" stroke="rgba(128,128,128,0.15)" />
-                        <XAxis dataKey="time" tick={{ fontSize: 10 }} interval="preserveStartEnd" />
-                        <YAxis tick={{ fontSize: 10 }} width={38} />
-                        <ChartTooltip content={<ChartTooltipContent />} />
-                        <Line type="monotone" dataKey="load1" stroke="var(--color-load1)" dot={false} strokeWidth={1.5} />
-                        <Line type="monotone" dataKey="load5" stroke="var(--color-load5)" dot={false} strokeWidth={1.5} />
-                        <Line type="monotone" dataKey="load15" stroke="var(--color-load15)" dot={false} strokeWidth={1.5} />
-                      </LineChart>
-                    </ChartContainer>
-                  </CardContent>
-                </Card>
+                      <CartesianGrid
+                        strokeDasharray="3 3"
+                        stroke="rgba(128,128,128,0.12)"
+                      />
+                      <XAxis
+                        dataKey="time"
+                        tick={{ fontSize: 10 }}
+                        interval="preserveStartEnd"
+                      />
+                      <YAxis tick={{ fontSize: 10 }} width={38} />
+                      <ChartTooltip content={<ChartTooltipContent />} />
+                      <Line
+                        type="monotone"
+                        dataKey="load1"
+                        stroke="var(--color-load1)"
+                        dot={false}
+                        strokeWidth={2}
+                      />
+                      <Line
+                        type="monotone"
+                        dataKey="load5"
+                        stroke="var(--color-load5)"
+                        dot={false}
+                        strokeWidth={2}
+                      />
+                      <Line
+                        type="monotone"
+                        dataKey="load15"
+                        stroke="var(--color-load15)"
+                        dot={false}
+                        strokeWidth={2}
+                      />
+                    </LineChart>
+                  </ChartContainer>
+                </ChartCard>
 
                 {/* 三网延迟趋势 */}
                 {hasLatencyHistory && (
-                  <Card>
-                    <CardHeader>
-                      <CardTitle>三网延迟趋势</CardTitle>
-                      <CardDescription>联通 / 移动 / 电信（ms）</CardDescription>
-                    </CardHeader>
-                    <CardContent>
-                      <ChartContainer
-                        config={{
-                          cu: { label: "联通", color: "hsl(var(--chart-1))" },
-                          cm: { label: "移动", color: "hsl(var(--chart-2))" },
-                          ct: { label: "电信", color: "hsl(var(--chart-3))" },
-                        } satisfies ChartConfig}
-                        className="w-full"
+                  <ChartCard
+                    title="三网延迟趋势"
+                    sub="联通 / 移动 / 电信"
+                    accent={ACCENTS[3]}
+                  >
+                    <ChartContainer
+                      config={{
+                        cu: { label: "联通", color: "hsl(var(--chart-1))" },
+                        cm: { label: "移动", color: "hsl(var(--chart-2))" },
+                        ct: { label: "电信", color: "hsl(var(--chart-3))" },
+                      } satisfies ChartConfig}
+                      className="w-full"
+                    >
+                      <LineChart
+                        data={chartData}
+                        margin={{ top: 4, right: 8, bottom: 0, left: 0 }}
                       >
-                        <LineChart data={chartData} margin={{ top: 4, right: 8, bottom: 0, left: 0 }}>
-                          <CartesianGrid strokeDasharray="3 3" stroke="rgba(128,128,128,0.15)" />
-                          <XAxis dataKey="time" tick={{ fontSize: 10 }} interval="preserveStartEnd" />
-                          <YAxis tickFormatter={(v) => `${v}`} tick={{ fontSize: 10 }} width={42} unit=" ms" />
-                          <ChartTooltip content={<ChartTooltipContent formatter={(v) => [`${v} ms`]} />} />
-                          <Line type="monotone" dataKey="cu" stroke="var(--color-cu)" dot={false} strokeWidth={1.5} connectNulls={false} />
-                          <Line type="monotone" dataKey="cm" stroke="var(--color-cm)" dot={false} strokeWidth={1.5} connectNulls={false} />
-                          <Line type="monotone" dataKey="ct" stroke="var(--color-ct)" dot={false} strokeWidth={1.5} connectNulls={false} />
-                        </LineChart>
-                      </ChartContainer>
-                    </CardContent>
-                  </Card>
+                        <CartesianGrid
+                          strokeDasharray="3 3"
+                          stroke="rgba(128,128,128,0.12)"
+                        />
+                        <XAxis
+                          dataKey="time"
+                          tick={{ fontSize: 10 }}
+                          interval="preserveStartEnd"
+                        />
+                        <YAxis
+                          tick={{ fontSize: 10 }}
+                          width={42}
+                          unit=" ms"
+                        />
+                        <ChartTooltip
+                          content={
+                            <ChartTooltipContent
+                              formatter={(v) => [`${v} ms`]}
+                            />
+                          }
+                        />
+                        <Line
+                          type="monotone"
+                          dataKey="cu"
+                          stroke="var(--color-cu)"
+                          dot={false}
+                          strokeWidth={2}
+                          connectNulls={false}
+                        />
+                        <Line
+                          type="monotone"
+                          dataKey="cm"
+                          stroke="var(--color-cm)"
+                          dot={false}
+                          strokeWidth={2}
+                          connectNulls={false}
+                        />
+                        <Line
+                          type="monotone"
+                          dataKey="ct"
+                          stroke="var(--color-ct)"
+                          dot={false}
+                          strokeWidth={2}
+                          connectNulls={false}
+                        />
+                      </LineChart>
+                    </ChartContainer>
+                  </ChartCard>
                 )}
               </div>
             )}
