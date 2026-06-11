@@ -600,6 +600,15 @@ struct BeaconReq {
     page: String,
 }
 
+#[derive(FromRow)]
+struct VisitorUpsertRow {
+    id: i64,
+    country_code: Option<String>,
+    location: Option<String>,
+    asn: Option<String>,
+    isp: Option<String>,
+}
+
 #[derive(Serialize)]
 struct BeaconResp {
     ip: String,
@@ -692,19 +701,12 @@ async fn record_beacon(
 
     // UPSERT：同一 IP 只保留一条记录，每次访问更新 last_seen
     let new_id = s.id_gen.lock().unwrap().next();
-    #[allow(clippy::type_complexity)]
-    let row: Option<(
-        i64,
-        Option<String>,
-        Option<String>,
-        Option<String>,
-        Option<String>,
-    )> = sqlx::query_as(
+    let row: Option<VisitorUpsertRow> = sqlx::query_as(
         "INSERT INTO visitors (id, ip, page, first_seen, last_seen)
-             VALUES ($1, $2, $3, NOW(), NOW())
-             ON CONFLICT (ip) DO UPDATE
-               SET last_seen = NOW(), page = EXCLUDED.page
-             RETURNING id, country_code, location, asn, isp",
+         VALUES ($1, $2, $3, NOW(), NOW())
+         ON CONFLICT (ip) DO UPDATE
+           SET last_seen = NOW(), page = EXCLUDED.page
+         RETURNING id, country_code, location, asn, isp",
     )
     .bind(new_id)
     .bind(&ip)
@@ -713,12 +715,19 @@ async fn record_beacon(
     .await
     .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    let (vid, country_code, location, asn, isp) = row.unwrap_or((new_id, None, None, None, None));
+    let row = row.unwrap_or(VisitorUpsertRow {
+        id: new_id,
+        country_code: None,
+        location: None,
+        asn: None,
+        isp: None,
+    });
 
     // GeoIP（异步，首次无 country_code 时触发）
-    if country_code.is_none() && !is_private_ip(&ip) {
+    if row.country_code.is_none() && !is_private_ip(&ip) {
         let pool = s.db.clone();
         let ip_clone = ip.clone();
+        let vid = row.id;
         tokio::spawn(async move {
             if let Ok(resp) = reqwest::Client::builder()
                 .timeout(Duration::from_secs(5))
@@ -776,10 +785,10 @@ async fn record_beacon(
 
     Ok(Json(BeaconResp {
         ip,
-        country_code,
-        location,
-        asn,
-        isp,
+        country_code: row.country_code,
+        location: row.location,
+        asn: row.asn,
+        isp: row.isp,
         today_rank,
         total_rank,
     }))
