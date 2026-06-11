@@ -11,6 +11,17 @@ env:
   RUSTFLAGS: -D warnings
 
 jobs:
+  web:
+    name: Web build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install
+        working-directory: web
+      - run: bun run build
+        working-directory: web
+
   check:
     name: fmt / clippy / test
     runs-on: ubuntu-latest

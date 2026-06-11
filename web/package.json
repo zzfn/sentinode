@@ -1,0 +1,18 @@
+{
+  "name": "sentinode-web",
+  "private": true,
+  "scripts": {
+    "dev": "bun server.ts",
+    "build": "bun build src/index.tsx --outdir dist --target browser --minify && cp index.html dist/"
+  },
+  "dependencies": {
+    "react": "^19",
+    "react-dom": "^19",
+    "wouter": "^3"
+  },
+  "devDependencies": {
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "typescript": "^5"
+  }
+}
