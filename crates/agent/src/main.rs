@@ -3,7 +3,6 @@ use clap::Parser;
 use common::monitor_client::MonitorClient;
 use common::{DiskStat, Metrics, NetStat, NodeInfo, ReportRequest};
 use local_ip_address::local_ip;
-use rustls::crypto::ring;
 use std::time::Duration;
 use sysinfo::{Disks, Networks, System};
 use tonic::metadata::MetadataValue;
@@ -41,7 +40,6 @@ fn build_channel(server: &str) -> Result<Channel> {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    ring::default_provider().install_default().ok();
     tracing_subscriber::fmt::init();
     let cli = Cli::parse();
 
