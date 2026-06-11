@@ -6,11 +6,16 @@ import {
   CartesianGrid,
   Line,
   LineChart,
-  ResponsiveContainer,
   Tooltip,
   XAxis,
   YAxis,
 } from "recharts";
+import {
+  ChartContainer,
+  ChartTooltip,
+  ChartTooltipContent,
+  type ChartConfig,
+} from "../components/ui/chart";
 import {
   fetchMetrics,
   fetchNode,
@@ -177,21 +182,21 @@ export default function NodeDetail() {
                     <CardDescription>最近 {metrics.length} 条，实时更新</CardDescription>
                   </CardHeader>
                   <CardContent>
-                    <ResponsiveContainer width="100%" height={200}>
+                    <ChartContainer config={{ cpu: { label: "CPU", color: "hsl(var(--chart-1))" } }} className="h-[200px] w-full">
                       <AreaChart data={chartData} margin={{ top: 4, right: 8, bottom: 0, left: 0 }}>
                         <defs>
                           <linearGradient id="cpuGrad" x1="0" y1="0" x2="0" y2="1">
-                            <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.25} />
-                            <stop offset="95%" stopColor="#3b82f6" stopOpacity={0} />
+                            <stop offset="5%" stopColor="var(--color-cpu)" stopOpacity={0.25} />
+                            <stop offset="95%" stopColor="var(--color-cpu)" stopOpacity={0} />
                           </linearGradient>
                         </defs>
                         <CartesianGrid strokeDasharray="3 3" stroke="rgba(128,128,128,0.15)" />
                         <XAxis dataKey="time" tick={{ fontSize: 10 }} interval="preserveStartEnd" />
                         <YAxis domain={[0, 100]} tickFormatter={(v) => `${v}%`} tick={{ fontSize: 10 }} width={38} />
-                        <Tooltip formatter={(v) => [`${v}%`, "CPU"]} />
-                        <Area type="monotone" dataKey="cpu" stroke="#3b82f6" fill="url(#cpuGrad)" dot={false} strokeWidth={1.5} />
+                        <ChartTooltip content={<ChartTooltipContent formatter={(v) => [`${v}%`]} />} />
+                        <Area type="monotone" dataKey="cpu" stroke="var(--color-cpu)" fill="url(#cpuGrad)" dot={false} strokeWidth={1.5} />
                       </AreaChart>
-                    </ResponsiveContainer>
+                    </ChartContainer>
                   </CardContent>
                 </Card>
 
@@ -201,26 +206,32 @@ export default function NodeDetail() {
                     <CardTitle>内存使用率</CardTitle>
                   </CardHeader>
                   <CardContent>
-                    <ResponsiveContainer width="100%" height={200}>
+                    <ChartContainer
+                      config={{
+                        memPct: { label: "内存", color: "hsl(var(--chart-2))" },
+                        swapPct: { label: "交换", color: "hsl(var(--chart-3))" },
+                      } satisfies ChartConfig}
+                      className="h-[200px] w-full"
+                    >
                       <AreaChart data={chartData} margin={{ top: 4, right: 8, bottom: 0, left: 0 }}>
                         <defs>
                           <linearGradient id="memGrad" x1="0" y1="0" x2="0" y2="1">
-                            <stop offset="5%" stopColor="#8b5cf6" stopOpacity={0.25} />
-                            <stop offset="95%" stopColor="#8b5cf6" stopOpacity={0} />
+                            <stop offset="5%" stopColor="var(--color-memPct)" stopOpacity={0.25} />
+                            <stop offset="95%" stopColor="var(--color-memPct)" stopOpacity={0} />
                           </linearGradient>
                           <linearGradient id="swapGrad" x1="0" y1="0" x2="0" y2="1">
-                            <stop offset="5%" stopColor="#06b6d4" stopOpacity={0.2} />
-                            <stop offset="95%" stopColor="#06b6d4" stopOpacity={0} />
+                            <stop offset="5%" stopColor="var(--color-swapPct)" stopOpacity={0.2} />
+                            <stop offset="95%" stopColor="var(--color-swapPct)" stopOpacity={0} />
                           </linearGradient>
                         </defs>
                         <CartesianGrid strokeDasharray="3 3" stroke="rgba(128,128,128,0.15)" />
                         <XAxis dataKey="time" tick={{ fontSize: 10 }} interval="preserveStartEnd" />
                         <YAxis domain={[0, 100]} tickFormatter={(v) => `${v}%`} tick={{ fontSize: 10 }} width={38} />
-                        <Tooltip formatter={(v, name) => [`${v}%`, name === "memPct" ? "内存" : "交换"]} />
-                        <Area type="monotone" dataKey="memPct" name="memPct" stroke="#8b5cf6" fill="url(#memGrad)" dot={false} strokeWidth={1.5} />
-                        <Area type="monotone" dataKey="swapPct" name="swapPct" stroke="#06b6d4" fill="url(#swapGrad)" dot={false} strokeWidth={1.5} />
+                        <ChartTooltip content={<ChartTooltipContent formatter={(v) => [`${v}%`]} />} />
+                        <Area type="monotone" dataKey="memPct" stroke="var(--color-memPct)" fill="url(#memGrad)" dot={false} strokeWidth={1.5} />
+                        <Area type="monotone" dataKey="swapPct" stroke="var(--color-swapPct)" fill="url(#swapGrad)" dot={false} strokeWidth={1.5} />
                       </AreaChart>
-                    </ResponsiveContainer>
+                    </ChartContainer>
                   </CardContent>
                 </Card>
 
@@ -230,17 +241,24 @@ export default function NodeDetail() {
                     <CardTitle>系统负载</CardTitle>
                   </CardHeader>
                   <CardContent>
-                    <ResponsiveContainer width="100%" height={200}>
+                    <ChartContainer
+                      config={{
+                        load1: { label: "1m", color: "hsl(var(--chart-4))" },
+                        load5: { label: "5m", color: "hsl(var(--chart-5))" },
+                        load15: { label: "15m", color: "hsl(262 83% 58%)" },
+                      } satisfies ChartConfig}
+                      className="h-[200px] w-full"
+                    >
                       <LineChart data={chartData} margin={{ top: 4, right: 8, bottom: 0, left: 0 }}>
                         <CartesianGrid strokeDasharray="3 3" stroke="rgba(128,128,128,0.15)" />
                         <XAxis dataKey="time" tick={{ fontSize: 10 }} interval="preserveStartEnd" />
                         <YAxis tick={{ fontSize: 10 }} width={38} />
-                        <Tooltip />
-                        <Line type="monotone" dataKey="load1" name="1m" stroke="#f59e0b" dot={false} strokeWidth={1.5} />
-                        <Line type="monotone" dataKey="load5" name="5m" stroke="#10b981" dot={false} strokeWidth={1.5} />
-                        <Line type="monotone" dataKey="load15" name="15m" stroke="#6366f1" dot={false} strokeWidth={1.5} />
+                        <ChartTooltip content={<ChartTooltipContent />} />
+                        <Line type="monotone" dataKey="load1" stroke="var(--color-load1)" dot={false} strokeWidth={1.5} />
+                        <Line type="monotone" dataKey="load5" stroke="var(--color-load5)" dot={false} strokeWidth={1.5} />
+                        <Line type="monotone" dataKey="load15" stroke="var(--color-load15)" dot={false} strokeWidth={1.5} />
                       </LineChart>
-                    </ResponsiveContainer>
+                    </ChartContainer>
                   </CardContent>
                 </Card>
               </div>

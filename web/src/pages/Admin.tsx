@@ -14,8 +14,13 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from ".
 import { Switch } from "../components/ui/switch";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../components/ui/table";
 import {
-  Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis,
+  Bar, BarChart, CartesianGrid, Tooltip, XAxis, YAxis,
 } from "recharts";
+import {
+  ChartContainer,
+  ChartTooltip,
+  ChartTooltipContent,
+} from "../components/ui/chart";
 
 const INSTALL_SCRIPT_URL =
   "https://raw.githubusercontent.com/zzfn/sentinode/main/scripts/install.sh";
@@ -332,21 +337,24 @@ function DbStatsView() {
           {stats.daily_metrics.length === 0 ? (
             <p className="text-sm text-[var(--color-muted-foreground)] py-8 text-center">暂无数据</p>
           ) : (
-            <ResponsiveContainer width="100%" height={220}>
+            <ChartContainer
+              config={{ count: { label: "新增条数", color: "hsl(var(--chart-1))" } }}
+              className="h-[220px] w-full"
+            >
               <BarChart data={stats.daily_metrics} margin={{ top: 4, right: 8, bottom: 0, left: 0 }}>
                 <defs>
                   <linearGradient id="barGrad" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0%" stopColor="#3b82f6" stopOpacity={0.9} />
-                    <stop offset="100%" stopColor="#3b82f6" stopOpacity={0.5} />
+                    <stop offset="0%" stopColor="var(--color-count)" stopOpacity={0.9} />
+                    <stop offset="100%" stopColor="var(--color-count)" stopOpacity={0.5} />
                   </linearGradient>
                 </defs>
                 <CartesianGrid strokeDasharray="3 3" stroke="rgba(128,128,128,0.15)" />
                 <XAxis dataKey="day" tick={{ fontSize: 11 }} />
-                <YAxis tick={{ fontSize: 11 }} width={50} tickFormatter={(v) => v >= 1000 ? `${(v / 1000).toFixed(0)}k` : v} />
-                <Tooltip formatter={(v: number) => [v.toLocaleString(), "条"]} />
-                <Bar dataKey="count" name="新增条数" fill="url(#barGrad)" radius={[3, 3, 0, 0]} />
+                <YAxis tick={{ fontSize: 11 }} width={50} tickFormatter={(v) => v >= 1000 ? `${(v / 1000).toFixed(0)}k` : String(v)} />
+                <ChartTooltip content={<ChartTooltipContent formatter={(v: number) => [v.toLocaleString()]} />} />
+                <Bar dataKey="count" fill="url(#barGrad)" radius={[3, 3, 0, 0]} />
               </BarChart>
-            </ResponsiveContainer>
+            </ChartContainer>
           )}
         </CardContent>
       </Card>
