@@ -112,7 +112,7 @@ async fn self_upgrade(http: &reqwest::Client) -> Result<()> {
             .args(&args[1..])
             .exec();
         // exec 成功不会返回；走到这里说明失败
-        return Err(anyhow::anyhow!("re-exec failed: {err}"));
+        Err(anyhow::anyhow!("re-exec failed: {err}"))
     }
     #[cfg(not(unix))]
     {
