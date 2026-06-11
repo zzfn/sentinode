@@ -33,7 +33,7 @@ function buildScript(serverUrl: string, token: string): string {
 
 const CURRENCIES = ["CNY", "USD", "EUR", "HKD"];
 
-type NavItem = "nodes" | "tokens" | "db";
+type NavItem = "nodes" | "db";
 
 // ── 节点信息编辑弹窗 ──────────────────────────────────────────────────────────
 
@@ -461,15 +461,6 @@ export default function Admin() {
       ),
     },
     {
-      key: "tokens",
-      label: "Token 管理",
-      icon: (
-        <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
-          <path strokeLinecap="round" strokeLinejoin="round" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" />
-        </svg>
-      ),
-    },
-    {
       key: "db",
       label: "数据库统计",
       icon: (
@@ -602,49 +593,46 @@ export default function Admin() {
                   )}
                 </CardContent>
               </Card>
-            </div>
-          )}
 
-          {/* Token 管理 */}
-          {nav === "tokens" && (
-            <Card>
-              <CardHeader>
-                <CardTitle>已注册 Agent</CardTitle>
-                <CardDescription>共 {tokens.length} 个 Agent Token</CardDescription>
-              </CardHeader>
-              <CardContent>
-                {tokens.length === 0 ? (
-                  <p className="text-sm text-muted-foreground py-4 text-center">暂无已注册的 Agent，点击右上角添加</p>
-                ) : (
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>名称</TableHead>
-                        <TableHead>Token</TableHead>
-                        <TableHead>注册时间</TableHead>
-                        <TableHead className="w-20">操作</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {tokens.map((tok) => (
-                        <TableRow key={tok.id}>
-                          <TableCell className="font-medium">{tok.name}</TableCell>
-                          <TableCell>
-                            <code className="text-xs font-mono bg-muted px-1.5 py-0.5 rounded break-all">{tok.token}</code>
-                          </TableCell>
-                          <TableCell className="text-muted-foreground text-xs whitespace-nowrap">
-                            {new Date(tok.created_at).toLocaleString("zh-CN")}
-                          </TableCell>
-                          <TableCell>
-                            <Button variant="destructive" size="sm" onClick={() => handleDelete(tok.id)}>删除</Button>
-                          </TableCell>
+              <Card>
+                <CardHeader>
+                  <CardTitle>已注册 Agent</CardTitle>
+                  <CardDescription>共 {tokens.length} 个 Token</CardDescription>
+                </CardHeader>
+                <CardContent>
+                  {tokens.length === 0 ? (
+                    <p className="text-sm text-muted-foreground py-4 text-center">暂无已注册的 Agent，点击右上角添加</p>
+                  ) : (
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>名称</TableHead>
+                          <TableHead>Token</TableHead>
+                          <TableHead>注册时间</TableHead>
+                          <TableHead className="w-20">操作</TableHead>
                         </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                )}
-              </CardContent>
-            </Card>
+                      </TableHeader>
+                      <TableBody>
+                        {tokens.map((tok) => (
+                          <TableRow key={tok.id}>
+                            <TableCell className="font-medium">{tok.name}</TableCell>
+                            <TableCell>
+                              <code className="text-xs font-mono bg-muted px-1.5 py-0.5 rounded break-all">{tok.token}</code>
+                            </TableCell>
+                            <TableCell className="text-muted-foreground text-xs whitespace-nowrap">
+                              {new Date(tok.created_at).toLocaleString("zh-CN")}
+                            </TableCell>
+                            <TableCell>
+                              <Button variant="destructive" size="sm" onClick={() => handleDelete(tok.id)}>删除</Button>
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  )}
+                </CardContent>
+              </Card>
+            </div>
           )}
 
           {/* 数据库统计 */}
