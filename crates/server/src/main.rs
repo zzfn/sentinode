@@ -23,6 +23,10 @@ struct Cli {
 
     #[arg(long, env = "HTTP_PORT", default_value_t = 8080)]
     http_port: u16,
+
+    /// 指标保留天数，超出后自动删除
+    #[arg(long, env = "METRICS_RETENTION_DAYS", default_value_t = 30)]
+    retention_days: i64,
 }
 
 #[derive(Clone)]
@@ -136,6 +140,30 @@ async fn main() -> Result<()> {
 
     let grpc_addr = format!("0.0.0.0:{}", cli.grpc_port).parse()?;
     let expected = format!("Bearer {}", cli.token);
+
+    // 每小时清理一次超出保留期的数据
+    let retention_pool = pool.clone();
+    let retention_days = cli.retention_days;
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(3600));
+        loop {
+            interval.tick().await;
+            match sqlx::query(
+                "DELETE FROM metrics WHERE reported_at < NOW() - ($1 || ' days')::INTERVAL",
+            )
+            .bind(retention_days)
+            .execute(&retention_pool)
+            .await
+            {
+                Ok(r) => {
+                    if r.rows_affected() > 0 {
+                        info!("retention: deleted {} rows", r.rows_affected());
+                    }
+                }
+                Err(e) => tracing::warn!("retention cleanup failed: {e}"),
+            }
+        }
+    });
 
     let svc = MonitorService { db: pool };
     let monitor = MonitorServer::with_interceptor(svc, move |req: Request<()>| {
