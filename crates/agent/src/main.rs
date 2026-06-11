@@ -6,14 +6,14 @@ use local_ip_address::local_ip;
 use std::time::Duration;
 use sysinfo::{Disks, Networks, System};
 use tonic::metadata::MetadataValue;
-use tonic::transport::Channel;
+use tonic::transport::{Channel, ClientTlsConfig};
 use tonic::Request;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 #[derive(Parser)]
 #[command(name = "sentinode-agent")]
 struct Cli {
-    /// gRPC 服务端地址
+    /// gRPC 服务端地址（https:// 自动启用 TLS）
     #[arg(long, env = "SENTINODE_SERVER", default_value = "http://localhost:50051")]
     server: String,
 
@@ -26,13 +26,20 @@ struct Cli {
     interval: u64,
 }
 
+fn build_channel(server: &str) -> Result<Channel> {
+    let mut endpoint = Channel::from_shared(server.to_owned())?;
+    if server.starts_with("https://") {
+        endpoint = endpoint.tls_config(ClientTlsConfig::new())?;
+    }
+    Ok(endpoint.connect_lazy())
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     tracing_subscriber::fmt::init();
     let cli = Cli::parse();
 
-    // 使用 connect_lazy，连接失败时自动重试
-    let channel = Channel::from_shared(cli.server.clone())?.connect_lazy();
+    let channel = build_channel(&cli.server)?;
     let bearer: MetadataValue<_> = format!("Bearer {}", cli.token).parse()?;
     let mut client = MonitorClient::with_interceptor(channel, move |mut req: Request<()>| {
         req.metadata_mut().insert("authorization", bearer.clone());
@@ -105,9 +112,23 @@ async fn main() -> Result<()> {
             timestamp: ts,
         };
 
-        match client.report(req).await {
-            Ok(r) => info!("reported ok={}", r.into_inner().ok),
-            Err(e) => error!("report failed: {e}"),
+        // 指数退避重试，最多 3 次（2s → 4s → 放弃）
+        'retry: for attempt in 0..3u32 {
+            match client.report(req.clone()).await {
+                Ok(r) => {
+                    info!("reported ok={}", r.into_inner().ok);
+                    break 'retry;
+                }
+                Err(e) => {
+                    let delay = Duration::from_secs(2u64.pow(attempt + 1));
+                    if attempt < 2 {
+                        warn!("report failed (attempt {}): {e}, retry in {delay:?}", attempt + 1);
+                        tokio::time::sleep(delay).await;
+                    } else {
+                        error!("report failed after 3 attempts: {e}");
+                    }
+                }
+            }
         }
 
         tokio::time::sleep(Duration::from_secs(cli.interval)).await;
