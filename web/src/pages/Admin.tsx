@@ -38,7 +38,7 @@ function buildScript(serverUrl: string, token: string): string {
 }
 
 const CURRENCIES = ["CNY", "USD", "EUR", "HKD"];
-type NavItem = "nodes" | "visitors" | "db";
+type NavItem = "nodes" | "cost" | "visitors" | "db";
 
 // ── 公共样式常量 ──────────────────────────────────────────────────────────────
 
@@ -622,6 +622,144 @@ function VisitorsView() {
   );
 }
 
+function CostView({ nodes }: { nodes: AdminNode[] }) {
+  const [cnyMap, setCnyMap] = useState<Record<string, number | null>>({});
+
+  const priced = nodes.filter((n) => n.price != null && n.price > 0);
+
+  useEffect(() => {
+    priced.forEach((n) => {
+      if (!n.price_currency || n.price_currency === "CNY") return;
+      toCNY(n.price!, n.price_currency).then((v) =>
+        setCnyMap((prev) => ({ ...prev, [n.id]: v }))
+      );
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [nodes.length]);
+
+  // 月均费用（原币）按货币归组
+  const byCurrency: Record<string, number> = {};
+  let totalCnyPerMonth = 0;
+  let totalCnyPerYear = 0;
+
+  for (const n of priced) {
+    const months = n.price_period_months ?? 1;
+    const monthly = n.price! / months;
+    const cur = n.price_currency ?? "CNY";
+    byCurrency[cur] = (byCurrency[cur] ?? 0) + monthly;
+
+    const cny = cur === "CNY" ? monthly : (cnyMap[n.id] != null ? cnyMap[n.id]! / months : null);
+    if (cny != null) {
+      totalCnyPerMonth += cny;
+      totalCnyPerYear += cny * 12;
+    }
+  }
+
+  const expiringSoon = nodes
+    .filter((n) => n.expires_at)
+    .map((n) => ({ ...n, daysLeft: Math.ceil((new Date(n.expires_at!).getTime() - Date.now()) / 86_400_000) }))
+    .filter((n) => n.daysLeft <= 30)
+    .sort((a, b) => a.daysLeft - b.daysLeft);
+
+  return (
+    <div className="space-y-6">
+      {/* 汇总卡片 */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        {[
+          { label: "月均总开销", value: totalCnyPerMonth > 0 ? `¥${totalCnyPerMonth.toFixed(0)}` : "—", dot: "var(--color-pink)" },
+          { label: "年度预估", value: totalCnyPerYear > 0 ? `¥${totalCnyPerYear.toFixed(0)}` : "—", dot: "var(--color-violet)" },
+          { label: "计费节点", value: String(priced.length), dot: "var(--color-emerald)" },
+          { label: "30天内到期", value: String(expiringSoon.length), dot: expiringSoon.length > 0 ? "var(--color-amber)" : "var(--color-border)" },
+        ].map(({ label, value, dot }) => (
+          <div key={label} className={`${CARD} p-4 flex flex-col gap-1`}>
+            <div className="flex items-center gap-1.5">
+              <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: dot }} />
+              <span className="text-xs text-[var(--color-muted-foreground)] font-medium">{label}</span>
+            </div>
+            <p className="text-2xl font-bold text-[var(--color-ink)]" style={{ fontFamily: "var(--font-display)" }}>{value}</p>
+          </div>
+        ))}
+      </div>
+
+      {/* 按货币分组 */}
+      {Object.keys(byCurrency).length > 0 && (
+        <div className={`${CARD} p-5`}>
+          <h3 className="text-sm font-bold text-[var(--color-ink)] mb-3">按货币月均</h3>
+          <div className="flex flex-wrap gap-3">
+            {Object.entries(byCurrency).map(([cur, amt]) => (
+              <div key={cur} className="flex items-center gap-2 px-3 py-1.5 rounded-xl border-2 border-[var(--color-border)] bg-[var(--color-cream)]">
+                <span className="text-xs font-mono text-[var(--color-muted-foreground)]">{cur}</span>
+                <span className="font-bold text-[var(--color-ink)]">{amt.toFixed(2)}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* 节点费用明细 */}
+      {priced.length > 0 && (
+        <div className={`${CARD} p-5`}>
+          <h3 className="text-sm font-bold text-[var(--color-ink)] mb-3">节点明细</h3>
+          <div className="space-y-2">
+            {priced.map((n) => {
+              const months = n.price_period_months ?? 1;
+              const monthly = n.price! / months;
+              const cur = n.price_currency ?? "CNY";
+              const cnyMonthly = cur === "CNY" ? monthly : (cnyMap[n.id] != null ? cnyMap[n.id]! / months : null);
+              return (
+                <div key={n.id} className="flex items-center justify-between py-2 border-b border-[var(--color-border)] last:border-0">
+                  <div className="flex items-center gap-2">
+                    {n.country_code && <img src={countryFlagUrl(n.country_code)!} alt="" className="w-4 h-auto rounded-sm" />}
+                    <span className="font-medium text-sm text-[var(--color-ink)]">{n.name || n.hostname}</span>
+                    {n.location && <span className="text-xs text-[var(--color-muted-foreground)]">{n.location}</span>}
+                  </div>
+                  <div className="text-right">
+                    <span className="font-mono text-sm font-semibold text-[var(--color-ink)]">
+                      {monthly.toFixed(2)} {cur}/月
+                    </span>
+                    {months > 1 && (
+                      <span className="text-xs text-[var(--color-muted-foreground)] ml-1">（{n.price} {cur}/{months}月）</span>
+                    )}
+                    {cnyMonthly != null && cur !== "CNY" && (
+                      <div className="text-xs text-[var(--color-muted-foreground)]">≈ ¥{cnyMonthly.toFixed(0)}/月</div>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* 即将到期 */}
+      {expiringSoon.length > 0 && (
+        <div className={`${CARD} p-5`}>
+          <h3 className="text-sm font-bold text-[var(--color-ink)] mb-3">即将到期</h3>
+          <div className="space-y-2">
+            {expiringSoon.map((n) => (
+              <div key={n.id} className="flex items-center justify-between py-2 border-b border-[var(--color-border)] last:border-0">
+                <div className="flex items-center gap-2">
+                  {n.country_code && <img src={countryFlagUrl(n.country_code)!} alt="" className="w-4 h-auto rounded-sm" />}
+                  <span className="font-medium text-sm text-[var(--color-ink)]">{n.name || n.hostname}</span>
+                </div>
+                <span className={`text-sm font-semibold font-mono ${n.daysLeft <= 0 ? "text-red-500" : n.daysLeft <= 7 ? "text-red-400" : "text-[var(--color-amber)]"}`}>
+                  {n.daysLeft <= 0 ? "已过期" : `${n.daysLeft} 天后`}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {priced.length === 0 && (
+        <div className={`${CARD} p-12 text-center text-sm text-[var(--color-muted-foreground)]`}>
+          暂无费用数据，请在节点编辑中填写价格信息
+        </div>
+      )}
+    </div>
+  );
+}
+
 function DbStatsView() {
   const [stats, setStats] = useState<AdminStats | null>(null);
   const [loading, setLoading] = useState(true);
@@ -891,6 +1029,7 @@ export default function Admin() {
 
   const NAV_ITEMS: { key: NavItem; label: string; dot: string }[] = [
     { key: "nodes", label: "节点管理", dot: "var(--color-emerald)" },
+    { key: "cost", label: "费用统计", dot: "var(--color-pink)" },
     { key: "visitors", label: "访客记录", dot: "var(--color-amber)" },
     { key: "db", label: "数据统计", dot: "var(--color-violet)" },
   ];
@@ -1120,6 +1259,9 @@ export default function Admin() {
 
             </div>
           )}
+
+          {/* 费用统计 */}
+          {nav === "cost" && <CostView nodes={nodes} />}
 
           {/* 访客记录 */}
           {nav === "visitors" && <VisitorsView />}
