@@ -16,8 +16,8 @@ RUN cargo chef cook --release --recipe-path recipe.json
 COPY . .
 RUN cargo build --release --bin sentinode-server
 
-FROM debian:bookworm-slim
-RUN apt-get update && apt-get install -y ca-certificates libssl3 && rm -rf /var/lib/apt/lists/*
+FROM ubuntu:24.04
+RUN apt-get update && apt-get install -y ca-certificates libssl3 postgresql-client && rm -rf /var/lib/apt/lists/*
 COPY --from=builder /app/target/release/sentinode-server /usr/local/bin/
 EXPOSE 8080
 CMD ["sentinode-server"]
