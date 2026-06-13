@@ -315,7 +315,7 @@ export default function NodeDetail() {
               </>
             )}
             {node?.country_code && (
-              <img src={countryFlagUrl(node.country_code)!} alt={node.country_code} className="w-5 h-auto rounded-sm flex-shrink-0" />
+              <img src={countryFlagUrl(node.country_code)!} alt={node.country_code} className="w-5 h-[15px] rounded-sm flex-shrink-0" />
             )}
             <h1
               className="text-base font-bold text-[var(--color-ink)] truncate"

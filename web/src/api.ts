@@ -354,7 +354,7 @@ export async function fetchVisitors(): Promise<VisitorStats> {
 
 export function countryFlagUrl(code: string | null | undefined): string | null {
   if (!code || code.length !== 2) return null;
-  return `https://flagcdn.com/20x15/${code.toLowerCase()}.png`;
+  return `https://flagcdn.com/${code.toLowerCase()}.svg`;
 }
 
 export interface StatusNode {

@@ -127,7 +127,7 @@ function NodeCard({ node }: { node: Node }) {
         {(node.country_code || node.location) && (
           <div className="flex items-center gap-1.5 mb-1">
             {node.country_code && (
-              <img src={countryFlagUrl(node.country_code)!} alt={node.country_code} className="w-5 h-auto rounded-sm" />
+              <img src={countryFlagUrl(node.country_code)!} alt={node.country_code} className="w-5 h-[15px] rounded-sm" />
             )}
             {node.location && (
               <span className="text-xs text-[var(--color-muted-foreground)]">{node.location}</span>
@@ -338,7 +338,7 @@ export default function Dashboard() {
                 <img
                   src={countryFlagUrl(visitorInfo.country_code)!}
                   alt={visitorInfo.country_code}
-                  className="w-4 h-auto rounded-sm"
+                  className="w-4 h-3 rounded-sm"
                 />
               )}
               {visitorInfo.location && (

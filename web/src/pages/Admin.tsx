@@ -709,7 +709,7 @@ function CostView({ nodes }: { nodes: AdminNode[] }) {
               return (
                 <div key={n.id} className="flex items-center justify-between py-2 border-b border-[var(--color-border)] last:border-0">
                   <div className="flex items-center gap-2">
-                    {n.country_code && <img src={countryFlagUrl(n.country_code)!} alt="" className="w-4 h-auto rounded-sm" />}
+                    {n.country_code && <img src={countryFlagUrl(n.country_code)!} alt="" className="w-4 h-3 rounded-sm" />}
                     <span className="font-medium text-sm text-[var(--color-ink)]">{n.name || n.hostname}</span>
                     {n.location && <span className="text-xs text-[var(--color-muted-foreground)]">{n.location}</span>}
                   </div>
@@ -739,7 +739,7 @@ function CostView({ nodes }: { nodes: AdminNode[] }) {
             {expiringSoon.map((n) => (
               <div key={n.id} className="flex items-center justify-between py-2 border-b border-[var(--color-border)] last:border-0">
                 <div className="flex items-center gap-2">
-                  {n.country_code && <img src={countryFlagUrl(n.country_code)!} alt="" className="w-4 h-auto rounded-sm" />}
+                  {n.country_code && <img src={countryFlagUrl(n.country_code)!} alt="" className="w-4 h-3 rounded-sm" />}
                   <span className="font-medium text-sm text-[var(--color-ink)]">{n.name || n.hostname}</span>
                 </div>
                 <span className={`text-sm font-semibold font-mono ${n.daysLeft <= 0 ? "text-red-500" : n.daysLeft <= 7 ? "text-red-400" : "text-[var(--color-amber)]"}`}>
@@ -1202,7 +1202,7 @@ export default function Admin() {
                                 <span className="h-2 w-2 rounded-full bg-red-400 flex-shrink-0" />
                               )}
                               {n.country_code && (
-                                <img src={countryFlagUrl(n.country_code)!} alt={n.country_code} className="w-5 h-auto rounded-sm" />
+                                <img src={countryFlagUrl(n.country_code)!} alt={n.country_code} className="w-5 h-[15px] rounded-sm" />
                               )}
                               <span className="font-bold text-[var(--color-ink)]" style={{ fontFamily: "var(--font-display)" }}>
                                 {n.name || n.hostname}
