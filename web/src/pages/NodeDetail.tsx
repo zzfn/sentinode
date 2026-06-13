@@ -89,11 +89,13 @@ function ChartCard({
   title,
   sub,
   accent,
+  action,
   children,
 }: {
   title: string;
   sub?: string;
   accent: { bg: string; fg: string };
+  action?: React.ReactNode;
   children: React.ReactNode;
 }) {
   return (
@@ -113,6 +115,7 @@ function ChartCard({
             {sub}
           </span>
         )}
+        {action && <div className="ml-auto">{action}</div>}
       </div>
       <div className="p-4">{children}</div>
     </div>
@@ -148,6 +151,7 @@ export default function NodeDetail() {
   const [loading, setLoading] = useState(true);
   const [range, setRange] = useState<RangeHours>(1);
   const [chartLoading, setChartLoading] = useState(false);
+  const [smoothLatency, setSmoothLatency] = useState(false);
 
   // 初始加载节点信息 + 1h 数据
   useEffect(() => {
@@ -227,6 +231,23 @@ export default function NodeDetail() {
       })),
     [metrics],
   );
+
+  const latencyChartData = useMemo(() => {
+    if (!smoothLatency) return chartData;
+    const W = 5;
+    return chartData.map((d, i) => {
+      const avg = (key: "cu" | "cm" | "ct") => {
+        const vals: number[] = [];
+        for (let j = Math.max(0, i - W + 1); j <= i; j++) {
+          const v = chartData[j][key];
+          if (v != null) vals.push(v);
+        }
+        if (vals.length === 0) return null;
+        return parseFloat((vals.reduce((a, b) => a + b, 0) / vals.length).toFixed(1));
+      };
+      return { ...d, cu: avg("cu"), cm: avg("cm"), ct: avg("ct") };
+    });
+  }, [chartData, smoothLatency]);
 
   const hasLatencyHistory = useMemo(
     () => chartData.some((d) => d.cu != null || d.cm != null || d.ct != null),
@@ -695,6 +716,20 @@ export default function NodeDetail() {
                     title="三网延迟趋势"
                     sub="联通 / 移动 / 电信"
                     accent={ACCENTS[3]}
+                    action={
+                      <button
+                        onClick={() => setSmoothLatency((v) => !v)}
+                        className="text-xs px-2 py-0.5 rounded-full border font-medium transition-colors"
+                        style={{
+                          borderColor: ACCENTS[3].fg,
+                          color: smoothLatency ? ACCENTS[3].bg : ACCENTS[3].fg,
+                          background: smoothLatency ? ACCENTS[3].fg : "transparent",
+                          opacity: 0.9,
+                        }}
+                      >
+                        平滑
+                      </button>
+                    }
                   >
                     <ChartContainer
                       config={{
@@ -705,7 +740,7 @@ export default function NodeDetail() {
                       className="w-full"
                     >
                       <LineChart
-                        data={chartData}
+                        data={latencyChartData}
                         margin={{ top: 4, right: 8, bottom: 0, left: 0 }}
                       >
                         <CartesianGrid
@@ -721,6 +756,7 @@ export default function NodeDetail() {
                           tick={{ fontSize: 10 }}
                           width={42}
                           unit=" ms"
+                          domain={[0, "auto"]}
                         />
                         <ChartTooltip
                           content={
