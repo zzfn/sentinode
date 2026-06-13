@@ -154,7 +154,7 @@ impl Monitor for MonitorService {
             sqlx::query_scalar(
                 "UPDATE nodes SET hostname=$1, ip=$2, os=$3, arch=$4, last_seen=NOW(),
                  cpu_model=COALESCE(NULLIF($5,''), cpu_model),
-                 agent_version=NULLIF($7,''),
+                 agent_version=NULLIF($7,'')
                  WHERE token=$6 AND hostname IS NULL
                  RETURNING id",
             )
