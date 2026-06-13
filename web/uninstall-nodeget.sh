@@ -121,7 +121,9 @@ stop_service() {
   local svc="$1"
   case "$INIT" in
     systemd)
-      systemctl disable --now "$svc" >/dev/null 2>&1
+      systemctl stop "$svc" >/dev/null 2>&1
+      systemctl disable "$svc" >/dev/null 2>&1
+      systemctl reset-failed "$svc" >/dev/null 2>&1
       rm -f "/etc/systemd/system/$svc.service"
       ;;
     openrc)
@@ -141,6 +143,9 @@ stop_service() {
 for r in $ROLES; do
   blu "==> 卸载 nodeget-$r ..."
   stop_service "nodeget-$r"
+  # 确保进程彻底退出，避免 Restart=always 拉起后重建 app.log/error.log
+  pkill -f "/usr/local/bin/nodeget-$r" 2>/dev/null && sleep 1
+  pkill -9 -f "/usr/local/bin/nodeget-$r" 2>/dev/null
   rm -f  "/usr/local/bin/nodeget-$r"
   rm -f  "/etc/nodeget-$r.toml" "/etc/nodeget-$r.conf"
   rm -rf "/etc/nodeget-$r.d" "/var/log/nodeget-$r" "/var/run/nodeget-$r"
