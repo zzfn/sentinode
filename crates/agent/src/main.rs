@@ -138,24 +138,68 @@ async fn tcp_ping(addr: &str) -> f32 {
     }
 }
 
+/// 并发跑 n 次 tcp_ping，返回 (avg_ms, jitter_ms, loss_percent)
+async fn ping_multiple(addr: &str, n: usize) -> (f32, f32, f32) {
+    let mut set = tokio::task::JoinSet::new();
+    for _ in 0..n {
+        let addr = addr.to_owned();
+        set.spawn(async move { tcp_ping(&addr).await });
+    }
+    let mut results = Vec::with_capacity(n);
+    while let Some(res) = set.join_next().await {
+        if let Ok(ms) = res {
+            results.push(ms);
+        }
+    }
+    // 成功的 ping（ms >= 0）
+    let success: Vec<f32> = results.iter().copied().filter(|&ms| ms >= 0.0).collect();
+    let total = n as f32;
+    let failed = results.iter().filter(|&&ms| ms < 0.0).count() as f32;
+    let loss_percent = failed / total * 100.0;
+
+    if success.is_empty() {
+        return (-1.0, 0.0, loss_percent);
+    }
+
+    let avg_ms = success.iter().sum::<f32>() / success.len() as f32;
+
+    // 样本标准差（样本数 < 2 时返回 0.0）
+    let jitter_ms = if success.len() < 2 {
+        0.0
+    } else {
+        let variance = success.iter().map(|&ms| (ms - avg_ms).powi(2)).sum::<f32>()
+            / (success.len() - 1) as f32;
+        variance.sqrt()
+    };
+
+    (avg_ms, jitter_ms, loss_percent)
+}
+
 async fn measure_latencies() -> Vec<LatencyResult> {
-    let (cu, cm, ct) = tokio::join!(
-        tcp_ping(LATENCY_TARGETS[0].1),
-        tcp_ping(LATENCY_TARGETS[1].1),
-        tcp_ping(LATENCY_TARGETS[2].1),
+    // 三个 ISP 并发，每个 ISP 内部 5 次 ping 也是并发
+    let ((cu_avg, cu_jitter, cu_loss), (cm_avg, cm_jitter, cm_loss), (ct_avg, ct_jitter, ct_loss)) = tokio::join!(
+        ping_multiple(LATENCY_TARGETS[0].1, 5),
+        ping_multiple(LATENCY_TARGETS[1].1, 5),
+        ping_multiple(LATENCY_TARGETS[2].1, 5),
     );
     vec![
         LatencyResult {
             isp: "cu".into(),
-            latency_ms: cu,
+            latency_ms: cu_avg,
+            jitter_ms: cu_jitter,
+            loss_percent: cu_loss,
         },
         LatencyResult {
             isp: "cm".into(),
-            latency_ms: cm,
+            latency_ms: cm_avg,
+            jitter_ms: cm_jitter,
+            loss_percent: cm_loss,
         },
         LatencyResult {
             isp: "ct".into(),
-            latency_ms: ct,
+            latency_ms: ct_avg,
+            jitter_ms: ct_jitter,
+            loss_percent: ct_loss,
         },
     ]
 }
@@ -372,8 +416,10 @@ async fn main() -> Result<()> {
                 tokio::time::sleep(Duration::from_secs(cli.interval)),
             );
             info!(
-                "latency: cu={:.1}ms cm={:.1}ms ct={:.1}ms",
-                latencies[0].latency_ms, latencies[1].latency_ms, latencies[2].latency_ms,
+                "latency: cu={:.1}ms(±{:.1}ms {}%) cm={:.1}ms(±{:.1}ms {}%) ct={:.1}ms(±{:.1}ms {}%)",
+                latencies[0].latency_ms, latencies[0].jitter_ms, latencies[0].loss_percent,
+                latencies[1].latency_ms, latencies[1].jitter_ms, latencies[1].loss_percent,
+                latencies[2].latency_ms, latencies[2].jitter_ms, latencies[2].loss_percent,
             );
             pending_latencies = latencies;
         } else {

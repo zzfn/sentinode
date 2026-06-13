@@ -359,22 +359,43 @@ export default function NodeDetail() {
             {hasCurrentLatency && (
               <div className="grid grid-cols-3 gap-4">
                 {[
-                  { label: "上海联通", ms: node!.latency_cu_ms, accent: ACCENTS[0] },
-                  { label: "上海移动", ms: node!.latency_cm_ms, accent: ACCENTS[1] },
-                  { label: "上海电信", ms: node!.latency_ct_ms, accent: ACCENTS[2] },
-                ].map(({ label, ms, accent }) => (
-                  <StatCard
-                    key={label}
-                    label={label}
-                    value={fmtLatency(ms)}
-                    sub={
-                      label === "上海联通" && node!.latency_updated_at
-                        ? `更新 ${new Date(node!.latency_updated_at).toLocaleTimeString("zh-CN")}`
-                        : undefined
-                    }
-                    accent={accent}
-                  />
-                ))}
+                  {
+                    label: "上海联通",
+                    ms: node!.latency_cu_ms,
+                    jitter: node!.latency_cu_jitter,
+                    loss: node!.latency_cu_loss,
+                    accent: ACCENTS[0],
+                  },
+                  {
+                    label: "上海移动",
+                    ms: node!.latency_cm_ms,
+                    jitter: node!.latency_cm_jitter,
+                    loss: node!.latency_cm_loss,
+                    accent: ACCENTS[1],
+                  },
+                  {
+                    label: "上海电信",
+                    ms: node!.latency_ct_ms,
+                    jitter: node!.latency_ct_jitter,
+                    loss: node!.latency_ct_loss,
+                    accent: ACCENTS[2],
+                  },
+                ].map(({ label, ms, jitter, loss, accent }) => {
+                  const parts: string[] = [];
+                  if (jitter != null && jitter > 0) parts.push(`±${jitter.toFixed(0)}ms 抖动`);
+                  if (loss != null && loss > 0) parts.push(`${loss.toFixed(0)}% 丢包`);
+                  if (label === "上海联通" && node!.latency_updated_at)
+                    parts.push(`更新 ${new Date(node!.latency_updated_at).toLocaleTimeString("zh-CN")}`);
+                  return (
+                    <StatCard
+                      key={label}
+                      label={label}
+                      value={fmtLatency(ms)}
+                      sub={parts.length > 0 ? parts.join(" · ") : undefined}
+                      accent={accent}
+                    />
+                  );
+                })}
               </div>
             )}
 

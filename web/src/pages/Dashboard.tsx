@@ -11,11 +11,15 @@ function LatencyPill({
   ms,
   bg,
   dark,
+  jitter,
+  loss,
 }: {
   label: string;
   ms: number | null | undefined;
   bg: string;
   dark?: boolean;
+  jitter?: number | null;
+  loss?: number | null;
 }) {
   if (ms == null) return null;
   const text = ms < 0 ? "超时" : `${ms.toFixed(0)} ms`;
@@ -30,6 +34,12 @@ function LatencyPill({
     >
       <span className="opacity-70">{label}</span>
       {text}
+      {!isTimeout && jitter != null && jitter > 0 && (
+        <span className="opacity-60 text-[10px]">±{jitter.toFixed(0)}ms</span>
+      )}
+      {!isTimeout && loss != null && loss > 0 && (
+        <span className="text-[10px]" style={{ color: dark ? "#dc2626" : "#fca5a5" }}>{loss.toFixed(0)}%丢包</span>
+      )}
     </span>
   );
 }
@@ -149,17 +159,23 @@ function NodeCard({ node }: { node: Node }) {
             label="联通"
             ms={node.latency_cu_ms}
             bg="var(--color-violet)"
+            jitter={node.latency_cu_jitter}
+            loss={node.latency_cu_loss}
           />
           <LatencyPill
             label="移动"
             ms={node.latency_cm_ms}
             bg="var(--color-pink)"
+            jitter={node.latency_cm_jitter}
+            loss={node.latency_cm_loss}
           />
           <LatencyPill
             label="电信"
             ms={node.latency_ct_ms}
             bg="var(--color-amber)"
             dark
+            jitter={node.latency_ct_jitter}
+            loss={node.latency_ct_loss}
           />
         </div>
       )}

@@ -16,6 +16,12 @@ export interface Node {
   latency_cu_ms: number | null;
   latency_cm_ms: number | null;
   latency_ct_ms: number | null;
+  latency_cu_jitter: number | null;
+  latency_cm_jitter: number | null;
+  latency_ct_jitter: number | null;
+  latency_cu_loss: number | null;
+  latency_cm_loss: number | null;
+  latency_ct_loss: number | null;
   latency_updated_at: string | null;
   net_rx_rate: number | null;
   net_tx_rate: number | null;

@@ -41,8 +41,10 @@ message Metrics {
 }
 
 message LatencyResult {
-  string isp        = 1;
-  float  latency_ms = 2;
+  string isp          = 1;
+  float  latency_ms   = 2;
+  float  jitter_ms    = 3;
+  float  loss_percent = 4;
 }
 
 message ReportRequest {

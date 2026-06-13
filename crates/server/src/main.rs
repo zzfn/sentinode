@@ -222,27 +222,49 @@ impl Monitor for MonitorService {
         };
 
         // 提取延迟数据（同时写入 metrics 和 nodes）
-        let (lat_cu, lat_cm, lat_ct) = if !req.latencies.is_empty() {
-            let mut cu = None::<f32>;
-            let mut cm = None::<f32>;
-            let mut ct = None::<f32>;
-            for l in &req.latencies {
-                let v = if l.latency_ms < 0.0 {
-                    None
-                } else {
-                    Some(l.latency_ms)
-                };
-                match l.isp.as_str() {
-                    "cu" => cu = v,
-                    "cm" => cm = v,
-                    "ct" => ct = v,
-                    _ => {}
+        let (lat_cu, lat_cm, lat_ct, jitter_cu, jitter_cm, jitter_ct, loss_cu, loss_cm, loss_ct) =
+            if !req.latencies.is_empty() {
+                let mut cu = None::<f32>;
+                let mut cm = None::<f32>;
+                let mut ct = None::<f32>;
+                let mut j_cu = None::<f32>;
+                let mut j_cm = None::<f32>;
+                let mut j_ct = None::<f32>;
+                let mut l_cu = None::<f32>;
+                let mut l_cm = None::<f32>;
+                let mut l_ct = None::<f32>;
+                for l in &req.latencies {
+                    let v = if l.latency_ms < 0.0 {
+                        None
+                    } else {
+                        Some(l.latency_ms)
+                    };
+                    // jitter 和 loss 始终记录（丢包时 jitter 为 0）
+                    let jitter = Some(l.jitter_ms);
+                    let loss = Some(l.loss_percent);
+                    match l.isp.as_str() {
+                        "cu" => {
+                            cu = v;
+                            j_cu = jitter;
+                            l_cu = loss;
+                        }
+                        "cm" => {
+                            cm = v;
+                            j_cm = jitter;
+                            l_cm = loss;
+                        }
+                        "ct" => {
+                            ct = v;
+                            j_ct = jitter;
+                            l_ct = loss;
+                        }
+                        _ => {}
+                    }
                 }
-            }
-            (cu, cm, ct)
-        } else {
-            (None, None, None)
-        };
+                (cu, cm, ct, j_cu, j_cm, j_ct, l_cu, l_cm, l_ct)
+            } else {
+                (None, None, None, None, None, None, None, None, None)
+            };
 
         sqlx::query(
             "INSERT INTO metrics
@@ -283,15 +305,24 @@ impl Monitor for MonitorService {
             .await
             .map_err(|e| Status::internal(e.to_string()))?;
 
-        // 若有延迟数据，同时更新 nodes 表当前值
+        // 若有延迟数据，同时更新 nodes 表当前值（含 jitter 和 loss）
         if lat_cu.is_some() || lat_cm.is_some() || lat_ct.is_some() {
             sqlx::query(
-                "UPDATE nodes SET latency_cu_ms = $1, latency_cm_ms = $2, latency_ct_ms = $3,
-                 latency_updated_at = NOW() WHERE id = $4",
+                "UPDATE nodes SET
+                 latency_cu_ms = $1, latency_cm_ms = $2, latency_ct_ms = $3,
+                 latency_cu_jitter = $4, latency_cm_jitter = $5, latency_ct_jitter = $6,
+                 latency_cu_loss = $7, latency_cm_loss = $8, latency_ct_loss = $9,
+                 latency_updated_at = NOW() WHERE id = $10",
             )
             .bind(lat_cu)
             .bind(lat_cm)
             .bind(lat_ct)
+            .bind(jitter_cu)
+            .bind(jitter_cm)
+            .bind(jitter_ct)
+            .bind(loss_cu)
+            .bind(loss_cm)
+            .bind(loss_ct)
             .bind(node_id)
             .execute(&self.db)
             .await
@@ -300,7 +331,7 @@ impl Monitor for MonitorService {
 
         // 查询完整节点信息（用于广播和返回开关状态）
         let row = sqlx::query_as::<_, NodeRow>(
-            "SELECT id, hostname, ip, os, arch, last_seen, expires_at, price, price_currency, website_url, latency_test_enabled, latency_cu_ms, latency_cm_ms, latency_ct_ms, latency_updated_at, name, token AS token_value, cpu_model, net_rx_rate, net_tx_rate, country_code, location, agent_version, price_period_months FROM nodes WHERE id = $1",
+            "SELECT id, hostname, ip, os, arch, last_seen, expires_at, price, price_currency, website_url, latency_test_enabled, latency_cu_ms, latency_cm_ms, latency_ct_ms, latency_cu_jitter, latency_cm_jitter, latency_ct_jitter, latency_cu_loss, latency_cm_loss, latency_ct_loss, latency_updated_at, name, token AS token_value, cpu_model, net_rx_rate, net_tx_rate, country_code, location, agent_version, price_period_months FROM nodes WHERE id = $1",
         )
         .bind(node_id)
         .fetch_one(&self.db)
@@ -430,6 +461,12 @@ struct NodeRow {
     latency_cu_ms: Option<f32>,
     latency_cm_ms: Option<f32>,
     latency_ct_ms: Option<f32>,
+    latency_cu_jitter: Option<f32>,
+    latency_cm_jitter: Option<f32>,
+    latency_ct_jitter: Option<f32>,
+    latency_cu_loss: Option<f32>,
+    latency_cm_loss: Option<f32>,
+    latency_ct_loss: Option<f32>,
     latency_updated_at: Option<DateTime<Utc>>,
     name: Option<String>,
     token_value: Option<String>,
@@ -455,6 +492,12 @@ struct NodeResponse {
     latency_cu_ms: Option<f32>,
     latency_cm_ms: Option<f32>,
     latency_ct_ms: Option<f32>,
+    latency_cu_jitter: Option<f32>,
+    latency_cm_jitter: Option<f32>,
+    latency_ct_jitter: Option<f32>,
+    latency_cu_loss: Option<f32>,
+    latency_cm_loss: Option<f32>,
+    latency_ct_loss: Option<f32>,
     latency_updated_at: Option<DateTime<Utc>>,
     net_rx_rate: Option<i64>,
     net_tx_rate: Option<i64>,
@@ -477,6 +520,12 @@ impl From<NodeRow> for NodeResponse {
             latency_cu_ms: r.latency_cu_ms,
             latency_cm_ms: r.latency_cm_ms,
             latency_ct_ms: r.latency_ct_ms,
+            latency_cu_jitter: r.latency_cu_jitter,
+            latency_cm_jitter: r.latency_cm_jitter,
+            latency_ct_jitter: r.latency_ct_jitter,
+            latency_cu_loss: r.latency_cu_loss,
+            latency_cm_loss: r.latency_cm_loss,
+            latency_ct_loss: r.latency_ct_loss,
             latency_updated_at: r.latency_updated_at,
             net_rx_rate: r.net_rx_rate,
             net_tx_rate: r.net_tx_rate,
@@ -694,7 +743,7 @@ async fn get_node(
 ) -> Result<Json<NodeResponse>, StatusCode> {
     let id: i64 = id.parse().map_err(|_| StatusCode::BAD_REQUEST)?;
     let row = sqlx::query_as::<_, NodeRow>(
-        "SELECT id, hostname, ip, os, arch, last_seen, expires_at, price, price_currency, website_url, latency_test_enabled, latency_cu_ms, latency_cm_ms, latency_ct_ms, latency_updated_at, name, token AS token_value, cpu_model, net_rx_rate, net_tx_rate, country_code, location, agent_version, price_period_months FROM nodes WHERE id = $1",
+        "SELECT id, hostname, ip, os, arch, last_seen, expires_at, price, price_currency, website_url, latency_test_enabled, latency_cu_ms, latency_cm_ms, latency_ct_ms, latency_cu_jitter, latency_cm_jitter, latency_ct_jitter, latency_cu_loss, latency_cm_loss, latency_ct_loss, latency_updated_at, name, token AS token_value, cpu_model, net_rx_rate, net_tx_rate, country_code, location, agent_version, price_period_months FROM nodes WHERE id = $1",
     )
     .bind(id)
     .fetch_optional(&s.db)
@@ -713,7 +762,10 @@ async fn sse_events(
     let snapshot: Vec<String> = sqlx::query_as::<_, NodeRow>(
         "SELECT n.id, n.hostname, n.ip, n.os, n.arch, n.last_seen, n.expires_at,
                 n.price, n.price_currency, n.website_url, n.latency_test_enabled,
-                n.latency_cu_ms, n.latency_cm_ms, n.latency_ct_ms, n.latency_updated_at,
+                n.latency_cu_ms, n.latency_cm_ms, n.latency_ct_ms,
+                n.latency_cu_jitter, n.latency_cm_jitter, n.latency_ct_jitter,
+                n.latency_cu_loss, n.latency_cm_loss, n.latency_ct_loss,
+                n.latency_updated_at,
                 n.name, n.token AS token_value,
                 n.cpu_model, n.net_rx_rate, n.net_tx_rate, n.country_code, n.location,
                 n.agent_version, n.price_period_months
@@ -1074,6 +1126,12 @@ struct AdminNodeResponse {
     latency_cu_ms: Option<f32>,
     latency_cm_ms: Option<f32>,
     latency_ct_ms: Option<f32>,
+    latency_cu_jitter: Option<f32>,
+    latency_cm_jitter: Option<f32>,
+    latency_ct_jitter: Option<f32>,
+    latency_cu_loss: Option<f32>,
+    latency_cm_loss: Option<f32>,
+    latency_ct_loss: Option<f32>,
     latency_updated_at: Option<DateTime<Utc>>,
     name: Option<String>,
     token: Option<String>,
@@ -1104,6 +1162,12 @@ impl From<NodeRow> for AdminNodeResponse {
             latency_cu_ms: r.latency_cu_ms,
             latency_cm_ms: r.latency_cm_ms,
             latency_ct_ms: r.latency_ct_ms,
+            latency_cu_jitter: r.latency_cu_jitter,
+            latency_cm_jitter: r.latency_cm_jitter,
+            latency_ct_jitter: r.latency_ct_jitter,
+            latency_cu_loss: r.latency_cu_loss,
+            latency_cm_loss: r.latency_cm_loss,
+            latency_ct_loss: r.latency_ct_loss,
             latency_updated_at: r.latency_updated_at,
             name: r.name,
             token: r.token_value,
@@ -1124,7 +1188,10 @@ async fn admin_list_nodes(
     let rows = sqlx::query_as::<_, NodeRow>(
         "SELECT n.id, n.hostname, n.ip, n.os, n.arch, n.last_seen, n.expires_at,
                 n.price, n.price_currency, n.website_url, n.latency_test_enabled,
-                n.latency_cu_ms, n.latency_cm_ms, n.latency_ct_ms, n.latency_updated_at,
+                n.latency_cu_ms, n.latency_cm_ms, n.latency_ct_ms,
+                n.latency_cu_jitter, n.latency_cm_jitter, n.latency_ct_jitter,
+                n.latency_cu_loss, n.latency_cm_loss, n.latency_ct_loss,
+                n.latency_updated_at,
                 n.name, n.token AS token_value,
                 n.cpu_model, n.net_rx_rate, n.net_tx_rate, n.country_code, n.location,
                 n.agent_version, n.price_period_months
@@ -1702,6 +1769,32 @@ async fn init_schema(pool: &PgPool) -> Result<()> {
         .ok();
 
     sqlx::query("ALTER TABLE nodes ADD COLUMN IF NOT EXISTS sort_order INT DEFAULT 0")
+        .execute(pool)
+        .await
+        .ok();
+
+    // 新增 jitter 和 loss 列
+    sqlx::query("ALTER TABLE nodes ADD COLUMN IF NOT EXISTS latency_cu_jitter FLOAT")
+        .execute(pool)
+        .await
+        .ok();
+    sqlx::query("ALTER TABLE nodes ADD COLUMN IF NOT EXISTS latency_cm_jitter FLOAT")
+        .execute(pool)
+        .await
+        .ok();
+    sqlx::query("ALTER TABLE nodes ADD COLUMN IF NOT EXISTS latency_ct_jitter FLOAT")
+        .execute(pool)
+        .await
+        .ok();
+    sqlx::query("ALTER TABLE nodes ADD COLUMN IF NOT EXISTS latency_cu_loss FLOAT")
+        .execute(pool)
+        .await
+        .ok();
+    sqlx::query("ALTER TABLE nodes ADD COLUMN IF NOT EXISTS latency_cm_loss FLOAT")
+        .execute(pool)
+        .await
+        .ok();
+    sqlx::query("ALTER TABLE nodes ADD COLUMN IF NOT EXISTS latency_ct_loss FLOAT")
         .execute(pool)
         .await
         .ok();
