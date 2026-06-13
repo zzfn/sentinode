@@ -1221,7 +1221,13 @@ export default function Admin() {
                               {n.cpu_model && <span className="truncate max-w-[200px]">{n.cpu_model}</span>}
                               {n.expires_at && (
                                 <span className={daysLeft != null && daysLeft <= 7 ? "text-red-500 font-semibold" : daysLeft != null && daysLeft <= 30 ? "text-[var(--color-amber)] font-semibold" : ""}>
-                                  到期 {new Date(n.expires_at).toLocaleDateString("zh-CN")}
+                                  {n.website_url ? (
+                                    <a href={n.website_url} target="_blank" rel="noopener noreferrer" className="underline underline-offset-2 hover:opacity-70" onClick={(e) => e.stopPropagation()}>
+                                      到期 {new Date(n.expires_at!).toLocaleDateString("zh-CN")}
+                                    </a>
+                                  ) : (
+                                    <>到期 {new Date(n.expires_at).toLocaleDateString("zh-CN")}</>
+                                  )}
                                   {daysLeft != null && ` (${daysLeft < 0 ? "已过期" : `${daysLeft}天`})`}
                                 </span>
                               )}

@@ -97,7 +97,7 @@ struct Cli {
     #[arg(long, env = "PORT", default_value_t = 8080)]
     port: u16,
 
-    #[arg(long, env = "METRICS_RETENTION_DAYS", default_value_t = 30)]
+    #[arg(long, env = "METRICS_RETENTION_DAYS", default_value_t = 7)]
     retention_days: i64,
 }
 
