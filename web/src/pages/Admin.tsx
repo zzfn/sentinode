@@ -973,7 +973,18 @@ export default function Admin() {
         const idx = prev.findIndex((n) => n.id === updated.id);
         if (idx === -1) return prev;
         const next = [...prev];
-        next[idx] = { ...next[idx], ...updated };
+        const old = next[idx];
+        next[idx] = { ...old, ...updated };
+        // agent_version 在 SSE 数据中存在，版本变化说明升级完成
+        const newVer = (updated as AdminNode).agent_version;
+        if (newVer && newVer !== old.agent_version) {
+          setUpgradingIds((ids) => {
+            if (!ids.has(updated.id)) return ids;
+            const s = new Set(ids);
+            s.delete(updated.id);
+            return s;
+          });
+        }
         return next;
       });
     });
