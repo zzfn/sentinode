@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link } from "wouter";
 import { countryFlagUrl, fmtBandwidth, sendBeacon, subscribeNodes, type BeaconInfo, type Node } from "../api";
 
@@ -226,10 +226,8 @@ export default function Dashboard() {
     };
   }, []);
 
-  const { onlineCount, offlineCount } = useMemo(() => {
-    const online = nodes.filter((n) => isOnline(n.last_seen)).length;
-    return { onlineCount: online, offlineCount: nodes.length - online };
-  }, [nodes]);
+  const onlineCount = nodes.filter((n) => isOnline(n.last_seen)).length;
+  const offlineCount = nodes.length - onlineCount;
 
   return (
     <div
