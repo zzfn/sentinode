@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "wouter";
 import { countryFlagUrl, fmtBandwidth, sendBeacon, subscribeNodes, type BeaconInfo, type Node } from "../api";
 
@@ -138,7 +138,7 @@ function NodeCard({ node }: { node: Node }) {
           className="text-lg font-bold leading-tight text-[var(--color-ink)] break-all"
           style={{ fontFamily: "var(--font-display)" }}
         >
-          {node.name || node.hostname}
+          {node.name ?? <span className="opacity-40 tracking-widest">••••••</span>}
         </h2>
         <p className="text-sm text-[var(--color-muted-foreground)] mt-0.5 leading-snug">
           {node.os}
@@ -243,6 +243,19 @@ export default function Dashboard() {
       unsub();
     };
   }, []);
+
+  const [regionFilter, setRegionFilter] = useState<string>("全部");
+
+  const regions = useMemo(() => {
+    const set = new Set<string>();
+    nodes.forEach((n) => { if (n.location) set.add(n.location); });
+    return ["全部", ...Array.from(set).sort()];
+  }, [nodes]);
+
+  const filteredNodes = useMemo(() =>
+    regionFilter === "全部" ? nodes : nodes.filter((n) => n.location === regionFilter),
+    [nodes, regionFilter],
+  );
 
   const onlineCount = nodes.filter((n) => isOnline(n.last_seen)).length;
   const offlineCount = nodes.length - onlineCount;
@@ -411,11 +424,32 @@ export default function Dashboard() {
             </p>
           </div>
         ) : (
-          /* 节点卡片网格 */
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
-            {nodes.map((n) => (
-              <NodeCard key={n.id} node={n} />
-            ))}
+          <div className="flex flex-col gap-5">
+            {/* 地区筛选 */}
+            {regions.length > 2 && (
+              <div className="flex flex-wrap gap-2">
+                {regions.map((r) => (
+                  <button
+                    key={r}
+                    onClick={() => setRegionFilter(r)}
+                    className="px-3 py-1 rounded-full text-xs font-semibold border-2 border-[var(--color-ink)] transition-all duration-150"
+                    style={
+                      regionFilter === r
+                        ? { background: "var(--color-ink)", color: "#fff" }
+                        : { background: "#fff", color: "var(--color-ink)" }
+                    }
+                  >
+                    {r}
+                  </button>
+                ))}
+              </div>
+            )}
+            {/* 节点卡片网格 */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
+              {filteredNodes.map((n) => (
+                <NodeCard key={n.id} node={n} />
+              ))}
+            </div>
           </div>
         )}
       </main>
