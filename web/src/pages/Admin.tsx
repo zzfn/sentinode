@@ -915,7 +915,8 @@ export default function Admin() {
   const [location, navigate] = useLocation();
   const nav: NavItem =
     location.startsWith("/app/visitors") ? "visitors" :
-    location.startsWith("/app/db") ? "db" : "nodes";
+    location.startsWith("/app/db") ? "db" :
+    location.startsWith("/app/cost") ? "cost" : "nodes";
   const [nodes, setNodes] = useState<AdminNode[]>([]);
   const [tokens, setTokens] = useState<AgentToken[]>([]);
   const [dialogOpen, setDialogOpen] = useState(false);
