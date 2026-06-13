@@ -176,15 +176,19 @@ export default function NodeDetail() {
     return () => { cancelled = true; };
   }, [id, range]);
 
-  // 仅 1h 模式下订阅 SSE 实时追加
+  // 仅 1h 模式下订阅 SSE 实时追加，同时更新节点状态保持在线判断准确
   useEffect(() => {
     if (!id || range !== 1) return;
-    const unsub = subscribeNodeDetail(id, (m) => {
-      setMetrics((prev) => {
-        const next = [...prev, m];
-        return next.length > 300 ? next.slice(-300) : next;
-      });
-    });
+    const unsub = subscribeNodeDetail(
+      id,
+      (m) => {
+        setMetrics((prev) => {
+          const next = [...prev, m];
+          return next.length > 300 ? next.slice(-300) : next;
+        });
+      },
+      (n) => setNode(n),
+    );
     return unsub;
   }, [id, range]);
 

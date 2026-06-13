@@ -173,12 +173,17 @@ export function subscribeNodes(onUpdate: (node: Node) => void): () => void {
   return () => _releaseEs(handler);
 }
 
-/** 订阅特定节点的实时 metric_added 事件，返回 unsubscribe 函数 */
+/** 订阅特定节点的实时事件（metric_added + node_updated），返回 unsubscribe 函数 */
 export function subscribeNodeDetail(
   nodeId: string,
   onMetric: (m: Metric) => void,
+  onNodeUpdate?: (n: Node) => void,
 ): () => void {
   const handler: SseHandler = (msg) => {
+    if (msg.type === "node_updated" && onNodeUpdate) {
+      const n = msg.data as Node;
+      if (n.id === nodeId) onNodeUpdate(n);
+    }
     if (msg.type === "metric_added" && msg.node_id === nodeId) {
       onMetric({
         id: `sse-${Date.now()}`,
