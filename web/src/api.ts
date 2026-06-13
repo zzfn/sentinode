@@ -39,14 +39,20 @@ export interface AdminNode extends Node {
 // ── 汇率换算 ──────────────────────────────────────────────────────────────────
 
 let _ratesCache: { rates: Record<string, number>; ts: number } | null = null;
+let _ratesFlight: Promise<Record<string, number>> | null = null;
 
 async function getUsdRates(): Promise<Record<string, number>> {
   const now = Date.now();
   if (_ratesCache && now - _ratesCache.ts < 3_600_000) return _ratesCache.rates;
-  const r = await fetch("https://open.er-api.com/v6/latest/USD");
-  const data = await r.json();
-  _ratesCache = { rates: data.rates as Record<string, number>, ts: now };
-  return _ratesCache.rates;
+  if (_ratesFlight) return _ratesFlight;
+  _ratesFlight = fetch("https://open.er-api.com/v6/latest/USD")
+    .then((r) => r.json())
+    .then((data) => {
+      _ratesCache = { rates: data.rates as Record<string, number>, ts: Date.now() };
+      _ratesFlight = null;
+      return _ratesCache.rates;
+    });
+  return _ratesFlight;
 }
 
 /** 将任意货币价格换算为人民币，失败时返回 null */
