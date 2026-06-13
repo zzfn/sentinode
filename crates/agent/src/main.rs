@@ -365,17 +365,19 @@ async fn main() -> Result<()> {
             }
         }
 
-        // 若已启用延迟测试，并发 TCP ping 三网，结果随下次 report 上报
+        // 延迟测试与 sleep 并发，避免串行导致上报周期翻倍
         if latency_enabled {
-            pending_latencies = measure_latencies().await;
+            let (latencies, _) = tokio::join!(
+                measure_latencies(),
+                tokio::time::sleep(Duration::from_secs(cli.interval)),
+            );
             info!(
                 "latency: cu={:.1}ms cm={:.1}ms ct={:.1}ms",
-                pending_latencies[0].latency_ms,
-                pending_latencies[1].latency_ms,
-                pending_latencies[2].latency_ms,
+                latencies[0].latency_ms, latencies[1].latency_ms, latencies[2].latency_ms,
             );
+            pending_latencies = latencies;
+        } else {
+            tokio::time::sleep(Duration::from_secs(cli.interval)).await;
         }
-
-        tokio::time::sleep(Duration::from_secs(cli.interval)).await;
     }
 }
