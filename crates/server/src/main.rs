@@ -99,6 +99,17 @@ struct Cli {
 
     #[arg(long, env = "METRICS_RETENTION_DAYS", default_value_t = 7)]
     retention_days: i64,
+
+    #[arg(long, env = "R2_ACCOUNT_ID")]
+    r2_account_id: Option<String>,
+    #[arg(long, env = "R2_BUCKET")]
+    r2_bucket: Option<String>,
+    #[arg(long, env = "R2_ACCESS_KEY")]
+    r2_access_key: Option<String>,
+    #[arg(long, env = "R2_SECRET_KEY")]
+    r2_secret_key: Option<String>,
+    #[arg(long, env = "BACKUP_INTERVAL_HOURS", default_value_t = 24u64)]
+    backup_interval_hours: u64,
 }
 
 // ── gRPC 服务 ────────────────────────────────────────────────────────────────
@@ -435,6 +446,14 @@ impl Monitor for MonitorService {
 // ── REST API ─────────────────────────────────────────────────────────────────
 
 #[derive(Clone)]
+struct R2Config {
+    account_id: String,
+    bucket: String,
+    access_key: String,
+    secret_key: String,
+}
+
+#[derive(Clone)]
 struct AppState {
     db: PgPool,
     id_gen: Arc<Mutex<SnowflakeGen>>,
@@ -443,6 +462,8 @@ struct AppState {
     upgrade_set: Arc<Mutex<HashSet<i64>>>,
     http_client: reqwest::Client,
     admin_token: String,
+    r2_config: Option<R2Config>,
+    database_url: String,
 }
 
 #[derive(FromRow)]
@@ -733,6 +754,119 @@ fn is_private_ip(ip: &str) -> bool {
         };
     }
     false
+}
+
+// ── 备份函数 ──────────────────────────────────────────────────────────────────
+
+async fn do_backup(
+    db: &PgPool,
+    id_gen: &Arc<Mutex<SnowflakeGen>>,
+    r2: &R2Config,
+    database_url: &str,
+) -> anyhow::Result<()> {
+    use aws_sdk_s3::config::{Builder as S3Builder, Credentials, Region};
+    use aws_sdk_s3::Client as S3Client;
+    use flate2::{write::GzEncoder, Compression};
+    use std::io::Write;
+
+    // 1. pg_dump
+    let output = tokio::process::Command::new("pg_dump")
+        .args(["--no-owner", "-Fc", database_url])
+        .output()
+        .await?;
+    if !output.status.success() {
+        anyhow::bail!(
+            "pg_dump failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    // 2. gzip 压缩
+    let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
+    encoder.write_all(&output.stdout)?;
+    let compressed = encoder.finish()?;
+    let size_bytes = compressed.len() as i64;
+
+    // 3. 生成 key
+    let now = chrono::Utc::now();
+    let key = format!("backups/{}.dump.gz", now.format("%Y%m%d-%H%M%S"));
+
+    // 4. 上传到 R2
+    let endpoint = format!("https://{}.r2.cloudflarestorage.com", r2.account_id);
+    let creds = Credentials::new(&r2.access_key, &r2.secret_key, None, None, "r2");
+    let cfg = S3Builder::new()
+        .endpoint_url(&endpoint)
+        .credentials_provider(creds)
+        .region(Region::new("auto"))
+        .behavior_version(aws_sdk_s3::config::BehaviorVersion::latest())
+        .build();
+    let client = S3Client::from_conf(cfg);
+    client
+        .put_object()
+        .bucket(&r2.bucket)
+        .key(&key)
+        .body(aws_sdk_s3::primitives::ByteStream::from(compressed))
+        .send()
+        .await?;
+
+    // 5. 写入 backups 表
+    let id = id_gen.lock().unwrap().next();
+    sqlx::query(
+        "INSERT INTO backups (id, size_bytes, r2_key, status) VALUES ($1, $2, $3, 'success')",
+    )
+    .bind(id)
+    .bind(size_bytes)
+    .bind(&key)
+    .execute(db)
+    .await?;
+
+    info!("backup ok: {} ({} bytes)", key, size_bytes);
+    Ok(())
+}
+
+async fn list_backups(State(s): State<AppState>) -> Result<Json<serde_json::Value>, StatusCode> {
+    #[derive(Serialize, sqlx::FromRow)]
+    struct BackupRow {
+        id: i64,
+        created_at: DateTime<Utc>,
+        size_bytes: Option<i64>,
+        r2_key: Option<String>,
+        status: String,
+        error: Option<String>,
+    }
+    let rows: Vec<BackupRow> = sqlx::query_as(
+        "SELECT id, created_at, size_bytes, r2_key, status, error FROM backups ORDER BY created_at DESC LIMIT 50"
+    )
+    .fetch_all(&s.db)
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(Json(json!({
+        "configured": s.r2_config.is_some(),
+        "backups": rows,
+    })))
+}
+
+async fn trigger_backup(State(s): State<AppState>) -> Result<Json<serde_json::Value>, StatusCode> {
+    let Some(r2) = s.r2_config.clone() else {
+        return Ok(Json(json!({ "error": "R2 未配置" })));
+    };
+    let db = s.db.clone();
+    let id_gen = s.id_gen.clone();
+    let url = s.database_url.clone();
+    tokio::spawn(async move {
+        if let Err(e) = do_backup(&db, &id_gen, &r2, &url).await {
+            tracing::error!("manual backup failed: {}", e);
+            // 写失败记录
+            let id = id_gen.lock().unwrap().next();
+            let _ =
+                sqlx::query("INSERT INTO backups (id, status, error) VALUES ($1, 'failed', $2)")
+                    .bind(id)
+                    .bind(e.to_string())
+                    .execute(&db)
+                    .await;
+        }
+    });
+    Ok(Json(json!({ "ok": true, "message": "备份已开始" })))
 }
 
 // ── REST 处理函数 ─────────────────────────────────────────────────────────────
@@ -1800,6 +1934,21 @@ async fn init_schema(pool: &PgPool) -> Result<()> {
         .await
         .ok();
 
+    // backups 表
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS backups (
+            id         BIGINT PRIMARY KEY,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            size_bytes BIGINT,
+            r2_key     TEXT,
+            status     TEXT NOT NULL DEFAULT 'pending',
+            error      TEXT
+        )",
+    )
+    .execute(pool)
+    .await
+    .ok();
+
     // 修正：若列已以 float8 (DOUBLE PRECISION) 创建，转换为 float4 (REAL) 与 f32 匹配
     for col in &[
         "latency_cu_jitter",
@@ -1926,6 +2075,21 @@ async fn main() -> Result<()> {
     // gRPC 路由作为 axum fallback，REST 路由优先匹配
     let grpc_router = GrpcRoutes::new(monitor).into_axum_router();
 
+    let r2_config = match (
+        &cli.r2_account_id,
+        &cli.r2_bucket,
+        &cli.r2_access_key,
+        &cli.r2_secret_key,
+    ) {
+        (Some(a), Some(b), Some(c), Some(d)) => Some(R2Config {
+            account_id: a.clone(),
+            bucket: b.clone(),
+            access_key: c.clone(),
+            secret_key: d.clone(),
+        }),
+        _ => None,
+    };
+
     let state = AppState {
         db: pool,
         id_gen,
@@ -1934,6 +2098,8 @@ async fn main() -> Result<()> {
         upgrade_set,
         http_client,
         admin_token: cli.admin_password.clone(),
+        r2_config: r2_config.clone(),
+        database_url: cli.database_url.clone(),
     };
 
     let protected_admin = Router::new()
@@ -1946,10 +2112,33 @@ async fn main() -> Result<()> {
         .route("/nodes/reorder", axum::routing::post(reorder_nodes))
         .route("/stats", get(admin_stats))
         .route("/visitors", get(admin_visitors))
+        .route("/backup", get(list_backups))
+        .route("/backup/trigger", axum::routing::post(trigger_backup))
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
             require_admin,
         ));
+
+    // 定时备份任务（在 state 被消费之前先克隆需要的字段）
+    if let Some(r2) = r2_config.clone() {
+        if cli.backup_interval_hours > 0 {
+            let backup_db = state.db.clone();
+            let backup_id_gen = state.id_gen.clone();
+            let db_url = cli.database_url.clone();
+            let hours = cli.backup_interval_hours;
+            tokio::spawn(async move {
+                let mut interval = tokio::time::interval(Duration::from_secs(hours * 3600));
+                interval.tick().await; // 跳过第一次立即触发
+                loop {
+                    interval.tick().await;
+                    if let Err(e) = do_backup(&backup_db, &backup_id_gen, &r2, &db_url).await {
+                        tracing::error!("scheduled backup failed: {}", e);
+                    }
+                }
+            });
+            info!("scheduled backup every {}h", hours);
+        }
+    }
 
     let app = Router::new()
         .route("/healthz", get(healthz))

@@ -38,7 +38,28 @@ function buildScript(serverUrl: string, token: string): string {
 }
 
 const CURRENCIES = ["CNY", "USD", "EUR", "HKD"];
-type NavItem = "nodes" | "cost" | "visitors" | "db";
+type NavItem = "nodes" | "cost" | "visitors" | "db" | "backup";
+
+// ── 备份相关类型和 API ────────────────────────────────────────────────────────
+
+interface BackupRecord {
+  id: string;
+  created_at: string;
+  size_bytes: number | null;
+  r2_key: string | null;
+  status: string;
+  error: string | null;
+}
+
+async function fetchBackups(): Promise<{ configured: boolean; backups: BackupRecord[] }> {
+  const r = await fetch(`${SERVER_URL}/api/admin/backup`, { credentials: "include" });
+  if (!r.ok) throw new Error("fetch backups failed");
+  return r.json();
+}
+
+async function triggerBackup(): Promise<void> {
+  await fetch(`${SERVER_URL}/api/admin/backup/trigger`, { method: "POST", credentials: "include" });
+}
 
 // ── 公共样式常量 ──────────────────────────────────────────────────────────────
 
@@ -923,7 +944,7 @@ export default function Admin() {
   useEffect(() => { document.title = "管理后台 · Sentinode"; }, []);
   const serverUrl = SERVER_URL;
   const [location, navigate] = useLocation();
-  const nav: NavItem = (["visitors", "db", "cost", "nodes"] as NavItem[])
+  const nav: NavItem = (["visitors", "db", "cost", "backup", "nodes"] as NavItem[])
     .find((k) => location.startsWith(`/app/${k}`)) ?? "nodes";
   const [nodes, setNodes] = useState<AdminNode[]>([]);
   const [tokens, setTokens] = useState<AgentToken[]>([]);
@@ -933,6 +954,15 @@ export default function Admin() {
   const [nodeCnyPrices, setNodeCnyPrices] = useState<Record<string, number | null>>({});
   const [upgradingIds, setUpgradingIds] = useState<Set<string>>(new Set());
   const [error, setError] = useState<string | null>(null);
+  const [backups, setBackups] = useState<{ configured: boolean; backups: BackupRecord[] } | null>(null);
+  const [backupLoading, setBackupLoading] = useState(false);
+  const [backupTriggerLoading, setBackupTriggerLoading] = useState(false);
+
+  useEffect(() => {
+    if (nav !== "backup") return;
+    setBackupLoading(true);
+    fetchBackups().then(setBackups).finally(() => setBackupLoading(false));
+  }, [nav]);
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
@@ -1058,6 +1088,7 @@ export default function Admin() {
     { key: "cost", label: "费用统计", dot: "var(--color-pink)" },
     { key: "visitors", label: "访客记录", dot: "var(--color-amber)" },
     { key: "db", label: "数据统计", dot: "var(--color-violet)" },
+    { key: "backup", label: "数据备份", dot: "var(--color-emerald)" },
   ];
 
   return (
@@ -1300,6 +1331,72 @@ export default function Admin() {
 
           {/* 数据库统计 */}
           {nav === "db" && <DbStatsView />}
+
+          {/* 数据备份 */}
+          {nav === "backup" && (
+            <div className="space-y-4">
+              <div className="flex items-center justify-between">
+                <h2 className="text-lg font-bold text-[var(--color-ink)]" style={{ fontFamily: "var(--font-display)" }}>
+                  数据备份
+                </h2>
+                <button
+                  onClick={async () => {
+                    setBackupTriggerLoading(true);
+                    await triggerBackup();
+                    setTimeout(() => {
+                      fetchBackups().then(setBackups);
+                      setBackupTriggerLoading(false);
+                    }, 2000);
+                  }}
+                  disabled={backupTriggerLoading || backups?.configured === false}
+                  className="px-4 py-2 rounded-xl text-sm font-semibold border-2 border-[var(--color-ink)] bg-[var(--color-emerald)] text-[var(--color-ink)] shadow-[2px_2px_0_0_#1E293B] hover:shadow-[3px_3px_0_0_#1E293B] hover:-translate-x-px hover:-translate-y-px transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {backupTriggerLoading ? "备份中..." : "立即备份"}
+                </button>
+              </div>
+
+              {backups?.configured === false && (
+                <div className={`${CARD} p-4 text-sm text-[var(--color-muted-foreground)]`}>
+                  R2 未配置，请设置环境变量：<code className="font-mono text-xs">R2_ACCOUNT_ID</code>、<code className="font-mono text-xs">R2_BUCKET</code>、<code className="font-mono text-xs">R2_ACCESS_KEY</code>、<code className="font-mono text-xs">R2_SECRET_KEY</code>
+                </div>
+              )}
+
+              {backupLoading ? (
+                <div className={`${CARD} p-8 text-center text-sm text-[var(--color-muted-foreground)]`}>加载中...</div>
+              ) : (
+                <div className={`${CARD} overflow-hidden`}>
+                  {!backups?.backups.length ? (
+                    <div className="p-8 text-center text-sm text-[var(--color-muted-foreground)]">暂无备份记录</div>
+                  ) : (
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="border-b-2 border-[var(--color-ink)]">
+                          <th className="px-4 py-2 text-left font-semibold">时间</th>
+                          <th className="px-4 py-2 text-left font-semibold">文件</th>
+                          <th className="px-4 py-2 text-right font-semibold">大小</th>
+                          <th className="px-4 py-2 text-center font-semibold">状态</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {backups.backups.map((b) => (
+                          <tr key={b.id} className="border-b border-[var(--color-border)] last:border-0 hover:bg-[var(--color-cream)]">
+                            <td className="px-4 py-2 font-mono text-xs">{new Date(b.created_at).toLocaleString("zh-CN")}</td>
+                            <td className="px-4 py-2 font-mono text-xs text-[var(--color-muted-foreground)] truncate max-w-[200px]">{b.r2_key ?? "—"}</td>
+                            <td className="px-4 py-2 text-right text-xs">{b.size_bytes ? `${(b.size_bytes / 1024 / 1024).toFixed(2)} MB` : "—"}</td>
+                            <td className="px-4 py-2 text-center">
+                              <span className={`px-2 py-0.5 rounded-full text-xs font-semibold border border-[var(--color-ink)] ${b.status === "success" ? "bg-[var(--color-emerald)]" : "bg-red-300"}`}>
+                                {b.status === "success" ? "成功" : "失败"}
+                              </span>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
         </main>
       </div>
 
