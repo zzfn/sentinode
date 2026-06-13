@@ -314,7 +314,7 @@ impl Monitor for MonitorService {
             // 优先使用 IPv4（geo 数据库覆盖更全），在 CF IP 和 agent 自报 IP 中选
             let geo_ip = [cf_ip.as_deref().unwrap_or(""), node.ip.as_str()]
                 .iter()
-                .find(|s| s.parse::<std::net::IpAddr>().map_or(false, |a| a.is_ipv4()))
+                .find(|s| s.parse::<std::net::IpAddr>().is_ok_and(|a| a.is_ipv4()))
                 .map(|s| s.to_string())
                 .unwrap_or_else(|| node.ip.clone());
             let ip = geo_ip;
