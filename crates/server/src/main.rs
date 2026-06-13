@@ -179,17 +179,25 @@ impl Monitor for MonitorService {
         let node_id: i64 = if let Some(id) = claimed_id {
             id
         } else {
-            // 已连接节点续报 / 全局 token 节点：按 hostname UPSERT
+            // 已连接节点续报 / 全局 token 节点：按 hostname+token 更新已有行，不存在则插入
             sqlx::query(
-                "INSERT INTO nodes (id, hostname, ip, os, arch, last_seen, token, cpu_model, agent_version)
-                 VALUES ($1, $2, $3, $4, $5, NOW(), $6, $7, $8)
-                 ON CONFLICT (hostname) DO UPDATE
-                 SET ip = EXCLUDED.ip, os = EXCLUDED.os, arch = EXCLUDED.arch,
-                     last_seen = NOW(),
-                     token = COALESCE(nodes.token, EXCLUDED.token),
-                     cpu_model = COALESCE(NULLIF(EXCLUDED.cpu_model, ''), nodes.cpu_model),
-                     agent_version = NULLIF(EXCLUDED.agent_version, '')
-                 RETURNING id",
+                "WITH upd AS (
+                   UPDATE nodes
+                   SET ip=$3, os=$4, arch=$5, last_seen=NOW(),
+                       token=COALESCE(nodes.token, $6),
+                       cpu_model=COALESCE(NULLIF($7,''), cpu_model),
+                       agent_version=NULLIF($8,'')
+                   WHERE hostname=$2
+                     AND (token=$6 OR (token IS NULL AND $6 IS NULL))
+                   RETURNING id
+                 ),
+                 ins AS (
+                   INSERT INTO nodes (id, hostname, ip, os, arch, last_seen, token, cpu_model, agent_version)
+                   SELECT $1, $2, $3, $4, $5, NOW(), $6, $7, $8
+                   WHERE NOT EXISTS (SELECT 1 FROM upd)
+                   RETURNING id
+                 )
+                 SELECT id FROM upd UNION ALL SELECT id FROM ins",
             )
             .bind(self.next_id())
             .bind(&node.hostname)
@@ -409,7 +417,7 @@ struct NodeRow {
     arch: Option<String>,
     last_seen: DateTime<Utc>,
     expires_at: Option<DateTime<Utc>>,
-    price: Option<f32>,
+    price: Option<f64>,
     price_currency: Option<String>,
     website_url: Option<String>,
     latency_test_enabled: Option<bool>,
@@ -1050,7 +1058,7 @@ struct AdminNodeResponse {
     arch: String,
     last_seen: DateTime<Utc>,
     expires_at: Option<DateTime<Utc>>,
-    price: Option<f32>,
+    price: Option<f64>,
     price_currency: Option<String>,
     website_url: Option<String>,
     latency_test_enabled: bool,
@@ -1147,7 +1155,7 @@ async fn delete_node(
 struct UpdateNodeMetaReq {
     name: Option<String>,
     expires_at: Option<DateTime<Utc>>,
-    price: Option<f32>,
+    price: Option<f64>,
     price_currency: Option<String>,
     website_url: Option<String>,
     latency_test_enabled: Option<bool>,
@@ -1392,7 +1400,7 @@ async fn init_schema(pool: &PgPool) -> Result<()> {
     sqlx::query(
         "CREATE TABLE IF NOT EXISTS nodes (
             id        BIGINT PRIMARY KEY,
-            hostname  TEXT   UNIQUE,
+            hostname  TEXT,
             ip        TEXT,
             os        TEXT,
             arch      TEXT,
@@ -1432,12 +1440,37 @@ async fn init_schema(pool: &PgPool) -> Result<()> {
         .execute(pool)
         .await?;
 
+    // 迁移：去掉 hostname 唯一约束（雪花 id 已是主键）
+    sqlx::query(
+        "DO $$ BEGIN
+         IF EXISTS (SELECT FROM pg_constraint WHERE conname='nodes_hostname_key') THEN
+           ALTER TABLE nodes DROP CONSTRAINT nodes_hostname_key;
+         END IF;
+         END $$",
+    )
+    .execute(pool)
+    .await
+    .ok();
+
     sqlx::query("ALTER TABLE nodes ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ")
         .execute(pool)
         .await?;
-    sqlx::query("ALTER TABLE nodes ADD COLUMN IF NOT EXISTS price REAL")
+    sqlx::query("ALTER TABLE nodes ADD COLUMN IF NOT EXISTS price DOUBLE PRECISION")
         .execute(pool)
         .await?;
+    // 迁移：将旧的 REAL 精度升级为 DOUBLE PRECISION
+    sqlx::query(
+        "DO $$ BEGIN
+         IF EXISTS (SELECT FROM information_schema.columns
+                    WHERE table_name='nodes' AND column_name='price'
+                    AND data_type='real') THEN
+           ALTER TABLE nodes ALTER COLUMN price TYPE DOUBLE PRECISION;
+         END IF;
+         END $$",
+    )
+    .execute(pool)
+    .await
+    .ok();
     sqlx::query("ALTER TABLE nodes ADD COLUMN IF NOT EXISTS price_currency TEXT DEFAULT 'CNY'")
         .execute(pool)
         .await?;
