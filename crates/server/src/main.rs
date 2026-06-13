@@ -2169,6 +2169,22 @@ async fn main() -> Result<()> {
         }
     }
 
+    let cors = CorsLayer::new()
+        .allow_origin(AllowOrigin::mirror_request())
+        .allow_methods([
+            axum::http::Method::GET,
+            axum::http::Method::POST,
+            axum::http::Method::PUT,
+            axum::http::Method::DELETE,
+            axum::http::Method::OPTIONS,
+        ])
+        .allow_headers([
+            axum::http::header::CONTENT_TYPE,
+            axum::http::header::AUTHORIZATION,
+            axum::http::header::COOKIE,
+        ])
+        .allow_credentials(true);
+
     let app = Router::new()
         .route("/healthz", get(healthz))
         .route("/api/events", get(sse_events))
@@ -2180,24 +2196,8 @@ async fn main() -> Result<()> {
         .route("/api/beacon", post(record_beacon))
         .route("/api/status", get(public_status))
         .with_state(state)
-        .layer(
-            CorsLayer::new()
-                .allow_origin(AllowOrigin::mirror_request())
-                .allow_methods([
-                    axum::http::Method::GET,
-                    axum::http::Method::POST,
-                    axum::http::Method::PUT,
-                    axum::http::Method::DELETE,
-                    axum::http::Method::OPTIONS,
-                ])
-                .allow_headers([
-                    axum::http::header::CONTENT_TYPE,
-                    axum::http::header::AUTHORIZATION,
-                    axum::http::header::COOKIE,
-                ])
-                .allow_credentials(true),
-        )
-        .fallback_service(grpc_router);
+        .layer(cors.clone())
+        .fallback_service(grpc_router.layer(cors));
 
     let listener = tokio::net::TcpListener::bind(format!("0.0.0.0:{}", cli.port)).await?;
     info!("listening on :{} (gRPC + HTTP)", cli.port);
