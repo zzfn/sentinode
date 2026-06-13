@@ -176,7 +176,7 @@ struct Cli {
     token: String,
 
     /// 上报间隔（秒）
-    #[arg(long, env = "SENTINODE_INTERVAL", default_value_t = 30)]
+    #[arg(long, env = "SENTINODE_INTERVAL", default_value_t = 5)]
     interval: u64,
 }
 
