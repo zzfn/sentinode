@@ -29,6 +29,7 @@ export interface AdminNode extends Node {
   expires_at: string | null;
   price: number | null;
   price_currency: string | null;
+  price_period_months: number | null;
   latency_test_enabled: boolean;
   name: string | null;
   token: string | null;
@@ -261,7 +262,7 @@ export async function fetchAdminStats(): Promise<AdminStats> {
 
 export async function updateNodeMeta(
   id: string,
-  data: { name?: string | null; expires_at?: string | null; price?: number | null; price_currency?: string | null; website_url?: string | null; country_code?: string | null; location?: string | null },
+  data: { name?: string | null; expires_at?: string | null; price?: number | null; price_currency?: string | null; price_period_months?: number | null; website_url?: string | null; country_code?: string | null; location?: string | null },
 ): Promise<void> {
   const r = await adminFetch(`${BASE}/admin/nodes/${id}`, {
     method: "PUT",

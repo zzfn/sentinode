@@ -4,7 +4,7 @@ import {
   AdminNode, AdminStats, AgentToken, SERVER_URL, VisitorEntry, VisitorStats,
   adminLogout, countryFlagUrl, createToken, deleteNode, deleteToken,
   fetchAdminNodes, fetchAdminStats, fetchTokens, fetchVisitors,
-  toCNY, toggleLatencyTest, triggerUpgrade, updateNodeMeta,
+  subscribeNodes, toCNY, toggleLatencyTest, triggerUpgrade, updateNodeMeta,
 } from "../api";
 import { relativeTime } from "../utils";
 import { Alert, AlertDescription } from "../components/ui/alert";
@@ -83,6 +83,7 @@ function EditNodeDialog({
   const [expiresAt, setExpiresAt] = useState("");
   const [price, setPrice] = useState("");
   const [currency, setCurrency] = useState("CNY");
+  const [pricePeriod, setPricePeriod] = useState(1);
   const [websiteUrl, setWebsiteUrl] = useState("");
   const [saving, setSaving] = useState(false);
   const [countryCode, setCountryCode] = useState("");
@@ -96,6 +97,7 @@ function EditNodeDialog({
     setExpiresAt(node.expires_at ? node.expires_at.slice(0, 10) : "");
     setPrice(node.price != null ? String(node.price) : "");
     setCurrency(node.price_currency ?? "CNY");
+    setPricePeriod(node.price_period_months ?? 1);
     setWebsiteUrl(node.website_url ?? "");
     setCountryCode(node.country_code ?? "");
     setLocation(node.location ?? "");
@@ -124,6 +126,7 @@ function EditNodeDialog({
         expires_at: expiresAt ? new Date(expiresAt).toISOString() : null,
         price: price ? parseFloat(price) : null,
         price_currency: price ? currency : null,
+        price_period_months: price ? pricePeriod : null,
         website_url: websiteUrl.trim() || null,
         country_code: countryCode.trim() || null,
         location: location.trim() || null,
@@ -149,7 +152,7 @@ function EditNodeDialog({
           <h2 className="text-base font-bold text-[var(--color-ink)]" style={{ fontFamily: "var(--font-display)" }}>
             编辑节点
           </h2>
-          <span className="ml-auto text-xs text-[var(--color-muted-foreground)] font-mono">{node.hostname}</span>
+          <span className="ml-auto text-xs text-[var(--color-muted-foreground)] font-mono">{node.name || node.hostname}</span>
         </div>
 
         {error && <Alert variant="destructive"><AlertDescription>{error}</AlertDescription></Alert>}
@@ -178,7 +181,7 @@ function EditNodeDialog({
             <Input type="date" value={expiresAt} onChange={(e) => setExpiresAt(e.target.value)} />
           </div>
           <div className="space-y-1.5">
-            <Label className="text-xs font-semibold text-[var(--color-muted-foreground)] uppercase tracking-wider">月费</Label>
+            <Label className="text-xs font-semibold text-[var(--color-muted-foreground)] uppercase tracking-wider">费用</Label>
             <div className="flex gap-2">
               <Input type="number" step="0.01" min="0" placeholder="0.00" value={price} onChange={(e) => setPrice(e.target.value)} className="flex-1" />
               <Select value={currency} onValueChange={setCurrency}>
@@ -187,8 +190,17 @@ function EditNodeDialog({
                   {CURRENCIES.map((c) => <SelectItem key={c} value={c}>{c}</SelectItem>)}
                 </SelectContent>
               </Select>
+              <Select value={String(pricePeriod)} onValueChange={(v) => setPricePeriod(Number(v))}>
+                <SelectTrigger className="w-28"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="1">1 月</SelectItem>
+                  <SelectItem value="3">3 月</SelectItem>
+                  <SelectItem value="6">6 月</SelectItem>
+                  <SelectItem value="12">12 月（年付）</SelectItem>
+                </SelectContent>
+              </Select>
             </div>
-            {cnyPreview && <p className="text-xs text-[var(--color-muted-foreground)]">{cnyPreview} / 月</p>}
+            {cnyPreview && <p className="text-xs text-[var(--color-muted-foreground)]">{cnyPreview} {pricePeriod === 1 ? "/ 月" : `/ ${pricePeriod}月`}</p>}
           </div>
         </div>
 
@@ -741,6 +753,20 @@ export default function Admin() {
     });
   }, []);
 
+  // SSE 实时更新 last_seen 等字段，保持在线状态准确
+  useEffect(() => {
+    const unsub = subscribeNodes((updated) => {
+      setNodes((prev) => {
+        const idx = prev.findIndex((n) => n.id === updated.id);
+        if (idx === -1) return prev;
+        const next = [...prev];
+        next[idx] = { ...next[idx], ...updated };
+        return next;
+      });
+    });
+    return unsub;
+  }, []);
+
   function handleTokenCreated(tok: AgentToken) {
     setTokens((prev) => [tok, ...prev]);
   }
@@ -973,7 +999,7 @@ export default function Admin() {
                               )}
                               {n.price != null && (
                                 <span>
-                                  {n.price} {n.price_currency}
+                                  {n.price} {n.price_currency}{n.price_period_months && n.price_period_months > 1 ? ` / ${n.price_period_months}月` : " / 月"}
                                   {cny != null && n.price_currency !== "CNY" && ` ≈ ¥${cny.toFixed(0)}`}
                                 </span>
                               )}

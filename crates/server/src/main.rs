@@ -300,7 +300,7 @@ impl Monitor for MonitorService {
 
         // 查询完整节点信息（用于广播和返回开关状态）
         let row = sqlx::query_as::<_, NodeRow>(
-            "SELECT id, hostname, ip, os, arch, last_seen, expires_at, price, price_currency, website_url, latency_test_enabled, latency_cu_ms, latency_cm_ms, latency_ct_ms, latency_updated_at, name, token AS token_value, cpu_model, net_rx_rate, net_tx_rate, country_code, location, agent_version FROM nodes WHERE id = $1",
+            "SELECT id, hostname, ip, os, arch, last_seen, expires_at, price, price_currency, website_url, latency_test_enabled, latency_cu_ms, latency_cm_ms, latency_ct_ms, latency_updated_at, name, token AS token_value, cpu_model, net_rx_rate, net_tx_rate, country_code, location, agent_version, price_period_months FROM nodes WHERE id = $1",
         )
         .bind(node_id)
         .fetch_one(&self.db)
@@ -433,6 +433,7 @@ struct NodeRow {
     country_code: Option<String>,
     location: Option<String>,
     agent_version: Option<String>,
+    price_period_months: Option<i32>,
 }
 
 #[derive(Serialize)]
@@ -685,7 +686,7 @@ async fn get_node(
 ) -> Result<Json<NodeResponse>, StatusCode> {
     let id: i64 = id.parse().map_err(|_| StatusCode::BAD_REQUEST)?;
     let row = sqlx::query_as::<_, NodeRow>(
-        "SELECT id, hostname, ip, os, arch, last_seen, expires_at, price, price_currency, website_url, latency_test_enabled, latency_cu_ms, latency_cm_ms, latency_ct_ms, latency_updated_at, name, token AS token_value, cpu_model, net_rx_rate, net_tx_rate, country_code, location, agent_version FROM nodes WHERE id = $1",
+        "SELECT id, hostname, ip, os, arch, last_seen, expires_at, price, price_currency, website_url, latency_test_enabled, latency_cu_ms, latency_cm_ms, latency_ct_ms, latency_updated_at, name, token AS token_value, cpu_model, net_rx_rate, net_tx_rate, country_code, location, agent_version, price_period_months FROM nodes WHERE id = $1",
     )
     .bind(id)
     .fetch_optional(&s.db)
@@ -707,7 +708,7 @@ async fn sse_events(
                 n.latency_cu_ms, n.latency_cm_ms, n.latency_ct_ms, n.latency_updated_at,
                 n.name, n.token AS token_value,
                 n.cpu_model, n.net_rx_rate, n.net_tx_rate, n.country_code, n.location,
-                n.agent_version
+                n.agent_version, n.price_period_months
          FROM nodes n WHERE n.hostname IS NOT NULL ORDER BY n.last_seen DESC",
     )
     .fetch_all(&s.db)
@@ -1074,6 +1075,7 @@ struct AdminNodeResponse {
     country_code: Option<String>,
     location: Option<String>,
     agent_version: Option<String>,
+    price_period_months: Option<i32>,
 }
 
 impl From<NodeRow> for AdminNodeResponse {
@@ -1103,6 +1105,7 @@ impl From<NodeRow> for AdminNodeResponse {
             country_code: r.country_code.clone(),
             location: r.location.clone(),
             agent_version: r.agent_version,
+            price_period_months: r.price_period_months,
         }
     }
 }
@@ -1116,7 +1119,7 @@ async fn admin_list_nodes(
                 n.latency_cu_ms, n.latency_cm_ms, n.latency_ct_ms, n.latency_updated_at,
                 n.name, n.token AS token_value,
                 n.cpu_model, n.net_rx_rate, n.net_tx_rate, n.country_code, n.location,
-                n.agent_version
+                n.agent_version, n.price_period_months
          FROM nodes n
          ORDER BY n.hostname IS NULL, n.last_seen DESC",
     )
@@ -1157,6 +1160,7 @@ struct UpdateNodeMetaReq {
     expires_at: Option<DateTime<Utc>>,
     price: Option<f64>,
     price_currency: Option<String>,
+    price_period_months: Option<i32>,
     website_url: Option<String>,
     latency_test_enabled: Option<bool>,
     country_code: Option<String>,
@@ -1174,8 +1178,9 @@ async fn update_node_meta(
          name=COALESCE($1,name),
          expires_at=$2, price=$3, price_currency=$4, website_url=$5,
          latency_test_enabled=COALESCE($6,latency_test_enabled),
-         country_code=COALESCE($7,country_code), location=COALESCE($8,location)
-         WHERE id=$9",
+         country_code=COALESCE($7,country_code), location=COALESCE($8,location),
+         price_period_months=COALESCE($9, price_period_months)
+         WHERE id=$10",
     )
     .bind(req.name.as_deref().filter(|s| !s.is_empty()))
     .bind(req.expires_at)
@@ -1185,6 +1190,7 @@ async fn update_node_meta(
     .bind(req.latency_test_enabled)
     .bind(req.country_code)
     .bind(req.location)
+    .bind(req.price_period_months)
     .bind(id)
     .execute(&s.db)
     .await
@@ -1645,6 +1651,11 @@ async fn init_schema(pool: &PgPool) -> Result<()> {
         .await
         .ok();
     sqlx::query("ALTER TABLE nodes ADD COLUMN IF NOT EXISTS agent_version TEXT")
+        .execute(pool)
+        .await
+        .ok();
+
+    sqlx::query("ALTER TABLE nodes ADD COLUMN IF NOT EXISTS price_period_months INT DEFAULT 1")
         .execute(pool)
         .await
         .ok();
