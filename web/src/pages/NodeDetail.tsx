@@ -317,7 +317,7 @@ export default function NodeDetail() {
               className="text-base font-bold text-[var(--color-ink)] truncate"
               style={{ fontFamily: "var(--font-display)" }}
             >
-              {node?.hostname ?? id}
+              {node?.name || node?.hostname || id}
             </h1>
             {node && (
               <span className="hidden sm:block text-xs text-[var(--color-muted-foreground)] truncate">

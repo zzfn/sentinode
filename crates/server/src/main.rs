@@ -1,8 +1,12 @@
 use anyhow::Result;
 use axum::{
-    extract::{Path, Query, State},
+    extract::{Path, Query, Request, State},
     http::{HeaderMap, StatusCode},
-    response::sse::{Event, KeepAlive, Sse},
+    middleware::Next,
+    response::{
+        sse::{Event, KeepAlive, Sse},
+        IntoResponse, Response,
+    },
     routing::{get, post, put},
     Json, Router,
 };
@@ -24,8 +28,8 @@ use tokio::sync::broadcast;
 use tokio_stream::wrappers::BroadcastStream;
 use tokio_stream::StreamExt;
 use tonic::service::Routes as GrpcRoutes;
-use tonic::{async_trait, Request, Response, Status};
-use tower_http::cors::CorsLayer;
+use tonic::{async_trait, Request as TonicRequest, Response as TonicResponse, Status};
+use tower_http::cors::{AllowOrigin, CorsLayer};
 use tracing::info;
 use uuid::Uuid;
 
@@ -87,6 +91,9 @@ struct Cli {
     #[arg(long, env = "SENTINODE_TOKEN")]
     token: String,
 
+    #[arg(long, env = "ADMIN_PASSWORD")]
+    admin_password: String,
+
     #[arg(long, env = "PORT", default_value_t = 8080)]
     port: u16,
 
@@ -115,8 +122,8 @@ impl MonitorService {
 impl Monitor for MonitorService {
     async fn report(
         &self,
-        request: Request<ReportRequest>,
-    ) -> Result<Response<ReportResponse>, Status> {
+        request: TonicRequest<ReportRequest>,
+    ) -> Result<TonicResponse<ReportResponse>, Status> {
         // 取 token 值用于关联节点
         let token_val: Option<String> = request
             .metadata()
@@ -372,7 +379,7 @@ impl Monitor for MonitorService {
         );
         let should_upgrade = self.upgrade_set.lock().unwrap().remove(&node_id);
 
-        Ok(Response::new(ReportResponse {
+        Ok(TonicResponse::new(ReportResponse {
             ok: true,
             latency_test_enabled: enabled,
             should_upgrade,
@@ -390,6 +397,7 @@ struct AppState {
     event_tx: broadcast::Sender<String>,
     upgrade_set: Arc<Mutex<HashSet<i64>>>,
     http_client: reqwest::Client,
+    admin_token: String,
 }
 
 #[derive(FromRow)]
@@ -863,6 +871,59 @@ async fn admin_visitors(State(s): State<AppState>) -> Result<Json<VisitorStatsRe
         active_now,
         recent,
     }))
+}
+
+// ── 管理员鉴权 ────────────────────────────────────────────────────────────────
+
+#[derive(Deserialize)]
+struct LoginReq {
+    password: String,
+}
+
+async fn admin_login(State(s): State<AppState>, Json(req): Json<LoginReq>) -> Response {
+    if req.password != s.admin_token {
+        return (StatusCode::UNAUTHORIZED, Json(json!({"ok": false}))).into_response();
+    }
+    let cookie = format!(
+        "admin_session={}; HttpOnly; Path=/; SameSite=Lax; Max-Age=2592000",
+        s.admin_token
+    );
+    let mut headers = HeaderMap::new();
+    headers.insert(axum::http::header::SET_COOKIE, cookie.parse().unwrap());
+    (StatusCode::OK, headers, Json(json!({"ok": true}))).into_response()
+}
+
+async fn admin_logout() -> Response {
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        axum::http::header::SET_COOKIE,
+        "admin_session=; HttpOnly; Path=/; SameSite=Lax; Max-Age=0"
+            .parse()
+            .unwrap(),
+    );
+    (StatusCode::OK, headers, Json(json!({"ok": true}))).into_response()
+}
+
+async fn require_admin(
+    State(s): State<AppState>,
+    request: Request,
+    next: Next,
+) -> Result<Response, StatusCode> {
+    let session = request
+        .headers()
+        .get("cookie")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|cookies| {
+            cookies
+                .split(';')
+                .map(|p| p.trim())
+                .find(|p| p.starts_with("admin_session="))
+                .map(|p| p["admin_session=".len()..].to_string())
+        });
+    match session {
+        Some(tok) if tok == s.admin_token => Ok(next.run(request).await),
+        _ => Err(StatusCode::UNAUTHORIZED),
+    }
 }
 
 async fn healthz() -> &'static str {
@@ -1641,7 +1702,7 @@ async fn main() -> Result<()> {
         upgrade_set: upgrade_set.clone(),
         http_client: http_client.clone(),
     };
-    let monitor = MonitorServer::with_interceptor(svc, move |req: Request<()>| {
+    let monitor = MonitorServer::with_interceptor(svc, move |req: TonicRequest<()>| {
         match req.metadata().get("authorization") {
             Some(v) => {
                 let bearer = v.to_str().unwrap_or("");
@@ -1660,38 +1721,47 @@ async fn main() -> Result<()> {
     // gRPC 路由作为 axum fallback，REST 路由优先匹配
     let grpc_router = GrpcRoutes::new(monitor).into_axum_router();
 
+    let state = AppState {
+        db: pool,
+        id_gen,
+        token_set,
+        event_tx,
+        upgrade_set,
+        http_client,
+        admin_token: cli.admin_password.clone(),
+    };
+
+    let protected_admin = Router::new()
+        .route("/tokens", get(list_tokens).post(create_token))
+        .route("/tokens/{id}", axum::routing::delete(delete_token))
+        .route("/nodes", get(admin_list_nodes))
+        .route("/nodes/{id}", put(update_node_meta).delete(delete_node))
+        .route("/nodes/{id}/upgrade", axum::routing::post(trigger_upgrade))
+        .route("/stats", get(admin_stats))
+        .route("/visitors", get(admin_visitors))
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            require_admin,
+        ));
+
     let app = Router::new()
         .route("/healthz", get(healthz))
         .route("/api/events", get(sse_events))
         .route("/api/nodes/{id}", get(get_node))
         .route("/api/nodes/{id}/metrics", get(node_metrics))
-        .route("/api/admin/tokens", get(list_tokens).post(create_token))
-        .route(
-            "/api/admin/tokens/{id}",
-            axum::routing::delete(delete_token),
-        )
-        .route("/api/admin/nodes", get(admin_list_nodes))
-        .route(
-            "/api/admin/nodes/{id}",
-            put(update_node_meta).delete(delete_node),
-        )
-        .route(
-            "/api/admin/nodes/{id}/upgrade",
-            axum::routing::post(trigger_upgrade),
-        )
-        .route("/api/admin/stats", get(admin_stats))
-        .route("/api/admin/visitors", get(admin_visitors))
+        .route("/api/admin/login", post(admin_login))
+        .route("/api/admin/logout", post(admin_logout))
+        .nest("/api/admin", protected_admin)
         .route("/api/beacon", post(record_beacon))
         .route("/api/status", get(public_status))
-        .with_state(AppState {
-            db: pool,
-            id_gen,
-            token_set,
-            event_tx,
-            upgrade_set,
-            http_client,
-        })
-        .layer(CorsLayer::permissive())
+        .with_state(state)
+        .layer(
+            CorsLayer::new()
+                .allow_origin(AllowOrigin::mirror_request())
+                .allow_methods(tower_http::cors::Any)
+                .allow_headers(tower_http::cors::Any)
+                .allow_credentials(true),
+        )
         .fallback_service(grpc_router);
 
     let listener = tokio::net::TcpListener::bind(format!("0.0.0.0:{}", cli.port)).await?;

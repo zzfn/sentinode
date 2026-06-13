@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Link, useLocation } from "wouter";
 import {
   AdminNode, AdminStats, AgentToken, SERVER_URL, VisitorEntry, VisitorStats,
-  countryFlagUrl, createToken, deleteNode, deleteToken,
+  adminLogout, countryFlagUrl, createToken, deleteNode, deleteToken,
   fetchAdminNodes, fetchAdminStats, fetchTokens, fetchVisitors,
   toCNY, toggleLatencyTest, triggerUpgrade, updateNodeMeta,
 } from "../api";
@@ -841,6 +841,16 @@ export default function Admin() {
             >
               ← 首页
             </Link>
+            <button
+              onClick={() => adminLogout()}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold
+                border-2 border-[var(--color-ink)] bg-white text-[var(--color-ink)]
+                shadow-[2px_2px_0_0_#1E293B]
+                hover:bg-[var(--color-cream)] hover:shadow-[3px_3px_0_0_#1E293B]
+                transition-all duration-150 cursor-pointer"
+            >
+              退出
+            </button>
             <button
               onClick={() => setDialogOpen(true)}
               className="flex items-center gap-1.5 px-4 py-1.5 rounded-full text-xs font-bold

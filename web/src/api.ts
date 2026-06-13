@@ -103,8 +103,22 @@ export function fmtUptime(secs: number): string {
   return `${m}m`;
 }
 
+async function adminFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+  const r = await fetch(input, { ...init, credentials: "include" });
+  if (r.status === 401) {
+    window.location.replace("/app/login");
+    throw new Error("Unauthorized");
+  }
+  return r;
+}
+
+export async function adminLogout(): Promise<void> {
+  await fetch(`${BASE}/admin/logout`, { method: "POST", credentials: "include" });
+  window.location.replace("/app/login");
+}
+
 export async function deleteNode(id: string): Promise<void> {
-  const r = await fetch(`${BASE}/admin/nodes/${id}`, { method: "DELETE" });
+  const r = await adminFetch(`${BASE}/admin/nodes/${id}`, { method: "DELETE" });
   if (!r.ok) throw new Error(`HTTP ${r.status}`);
 }
 
@@ -179,7 +193,7 @@ export function subscribeNodeDetail(
 }
 
 export async function fetchAdminNodes(): Promise<AdminNode[]> {
-  const r = await fetch(`${BASE}/admin/nodes`);
+  const r = await adminFetch(`${BASE}/admin/nodes`);
   if (!r.ok) throw new Error(`HTTP ${r.status}`);
   return r.json();
 }
@@ -191,13 +205,13 @@ export async function fetchMetrics(id: string, hours = 1): Promise<Metric[]> {
 }
 
 export async function fetchTokens(): Promise<AgentToken[]> {
-  const r = await fetch(`${BASE}/admin/tokens`);
+  const r = await adminFetch(`${BASE}/admin/tokens`);
   if (!r.ok) throw new Error(`HTTP ${r.status}`);
   return r.json();
 }
 
 export async function createToken(name: string): Promise<AgentToken> {
-  const r = await fetch(`${BASE}/admin/tokens`, {
+  const r = await adminFetch(`${BASE}/admin/tokens`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ name }),
@@ -207,17 +221,17 @@ export async function createToken(name: string): Promise<AgentToken> {
 }
 
 export async function deleteToken(id: string): Promise<void> {
-  const r = await fetch(`${BASE}/admin/tokens/${id}`, { method: "DELETE" });
+  const r = await adminFetch(`${BASE}/admin/tokens/${id}`, { method: "DELETE" });
   if (!r.ok) throw new Error(`HTTP ${r.status}`);
 }
 
 export async function triggerUpgrade(id: string): Promise<void> {
-  const r = await fetch(`${BASE}/admin/nodes/${id}/upgrade`, { method: "POST" });
+  const r = await adminFetch(`${BASE}/admin/nodes/${id}/upgrade`, { method: "POST" });
   if (!r.ok) throw new Error(`HTTP ${r.status}`);
 }
 
 export async function toggleLatencyTest(id: string, enabled: boolean): Promise<void> {
-  const r = await fetch(`${BASE}/admin/nodes/${id}`, {
+  const r = await adminFetch(`${BASE}/admin/nodes/${id}`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ latency_test_enabled: enabled }),
@@ -235,7 +249,7 @@ export interface AdminStats {
 }
 
 export async function fetchAdminStats(): Promise<AdminStats> {
-  const r = await fetch(`${BASE}/admin/stats`);
+  const r = await adminFetch(`${BASE}/admin/stats`);
   if (!r.ok) throw new Error(`HTTP ${r.status}`);
   return r.json();
 }
@@ -244,7 +258,7 @@ export async function updateNodeMeta(
   id: string,
   data: { name?: string | null; expires_at?: string | null; price?: number | null; price_currency?: string | null; website_url?: string | null; country_code?: string | null; location?: string | null },
 ): Promise<void> {
-  const r = await fetch(`${BASE}/admin/nodes/${id}`, {
+  const r = await adminFetch(`${BASE}/admin/nodes/${id}`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(data),
@@ -301,7 +315,7 @@ export async function sendBeacon(page: string): Promise<BeaconInfo | null> {
 }
 
 export async function fetchVisitors(): Promise<VisitorStats> {
-  const r = await fetch(`${BASE}/admin/visitors`);
+  const r = await adminFetch(`${BASE}/admin/visitors`);
   if (!r.ok) throw new Error(`HTTP ${r.status}`);
   return r.json();
 }
