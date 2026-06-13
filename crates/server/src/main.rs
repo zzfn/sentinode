@@ -1130,7 +1130,7 @@ async fn admin_list_nodes(
                 n.cpu_model, n.net_rx_rate, n.net_tx_rate, n.country_code, n.location,
                 n.agent_version, n.price_period_months
          FROM nodes n
-         ORDER BY n.hostname IS NULL, n.last_seen DESC",
+         ORDER BY n.hostname IS NULL, n.sort_order ASC, n.last_seen DESC",
     )
     .fetch_all(&s.db)
     .await
@@ -1204,6 +1204,26 @@ async fn update_node_meta(
     .execute(&s.db)
     .await
     .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+#[derive(Deserialize)]
+struct ReorderReq {
+    ids: Vec<i64>,
+}
+
+async fn reorder_nodes(
+    State(s): State<AppState>,
+    Json(req): Json<ReorderReq>,
+) -> Result<StatusCode, StatusCode> {
+    for (i, id) in req.ids.iter().enumerate() {
+        sqlx::query("UPDATE nodes SET sort_order=$1 WHERE id=$2")
+            .bind(i as i32)
+            .bind(id)
+            .execute(&s.db)
+            .await
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    }
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -1682,6 +1702,11 @@ async fn init_schema(pool: &PgPool) -> Result<()> {
         .await
         .ok();
 
+    sqlx::query("ALTER TABLE nodes ADD COLUMN IF NOT EXISTS sort_order INT DEFAULT 0")
+        .execute(pool)
+        .await
+        .ok();
+
     Ok(())
 }
 
@@ -1804,6 +1829,7 @@ async fn main() -> Result<()> {
         .route("/nodes/{id}", put(update_node_meta).delete(delete_node))
         .route("/nodes/{id}/upgrade", axum::routing::post(trigger_upgrade))
         .route("/nodes/{id}/reset-geo", axum::routing::post(reset_node_geo))
+        .route("/nodes/reorder", axum::routing::post(reorder_nodes))
         .route("/stats", get(admin_stats))
         .route("/visitors", get(admin_visitors))
         .layer(axum::middleware::from_fn_with_state(

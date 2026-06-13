@@ -124,6 +124,15 @@ export async function adminLogout(): Promise<void> {
   window.location.replace("/app/login");
 }
 
+export async function reorderNodes(ids: string[]): Promise<void> {
+  const r = await adminFetch(`${BASE}/admin/nodes/reorder`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ ids: ids.map(Number) }),
+  });
+  if (!r.ok) throw new Error(`HTTP ${r.status}`);
+}
+
 export async function resetNodeGeo(id: string): Promise<void> {
   const r = await adminFetch(`${BASE}/admin/nodes/${id}/reset-geo`, { method: "POST" });
   if (!r.ok) throw new Error(`HTTP ${r.status}`);

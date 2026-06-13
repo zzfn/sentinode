@@ -4,8 +4,15 @@ import {
   AdminNode, AdminStats, AgentToken, SERVER_URL, VisitorEntry, VisitorStats,
   adminLogout, countryFlagUrl, createToken, deleteNode, deleteToken,
   fetchAdminNodes, fetchAdminStats, fetchTokens, fetchVisitors,
-  resetNodeGeo, subscribeNodes, toCNY, toggleLatencyTest, triggerUpgrade, updateNodeMeta,
+  reorderNodes, resetNodeGeo, subscribeNodes, toCNY, toggleLatencyTest, triggerUpgrade, updateNodeMeta,
 } from "../api";
+import {
+  DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors, type DragEndEvent,
+} from "@dnd-kit/core";
+import {
+  SortableContext, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy, arrayMove,
+} from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
 import { relativeTime } from "../utils";
 import { Alert, AlertDescription } from "../components/ui/alert";
 import { Input } from "../components/ui/input";
@@ -740,6 +747,31 @@ function DbStatsView() {
 
 // ── 主页面 ────────────────────────────────────────────────────────────────────
 
+function SortableNodeRow({ id, children }: { id: string; children: React.ReactNode }) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id });
+  return (
+    <div
+      ref={setNodeRef}
+      style={{ transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.5 : 1 }}
+      className="relative group"
+    >
+      <div
+        {...attributes}
+        {...listeners}
+        className="absolute left-0 top-0 bottom-0 w-7 flex items-center justify-center cursor-grab active:cursor-grabbing text-[var(--color-border)] hover:text-[var(--color-muted-foreground)] opacity-0 group-hover:opacity-100 transition-opacity z-10"
+        title="拖拽排序"
+      >
+        <svg width="12" height="20" viewBox="0 0 12 20" fill="currentColor">
+          <circle cx="4" cy="4" r="1.5"/><circle cx="8" cy="4" r="1.5"/>
+          <circle cx="4" cy="10" r="1.5"/><circle cx="8" cy="10" r="1.5"/>
+          <circle cx="4" cy="16" r="1.5"/><circle cx="8" cy="16" r="1.5"/>
+        </svg>
+      </div>
+      {children}
+    </div>
+  );
+}
+
 export default function Admin() {
   const serverUrl = SERVER_URL;
   const [location, navigate] = useLocation();
@@ -754,6 +786,23 @@ export default function Admin() {
   const [nodeCnyPrices, setNodeCnyPrices] = useState<Record<string, number | null>>({});
   const [upgradingIds, setUpgradingIds] = useState<Set<string>>(new Set());
   const [error, setError] = useState<string | null>(null);
+
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+  );
+
+  function handleDragEnd(event: DragEndEvent) {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+    setNodes((prev) => {
+      const oldIdx = prev.findIndex((n) => n.id === active.id);
+      const newIdx = prev.findIndex((n) => n.id === over.id);
+      const next = arrayMove(prev, oldIdx, newIdx);
+      reorderNodes(next.map((n) => n.id)).catch(() => {});
+      return next;
+    });
+  }
 
   useEffect(() => {
     Promise.all([
@@ -964,7 +1013,9 @@ export default function Admin() {
                   暂无节点，点击右上角"添加 Agent"开始
                 </div>
               ) : (
-                <div className="space-y-3">
+                <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+                  <SortableContext items={nodes.map((n) => n.id)} strategy={verticalListSortingStrategy}>
+                  <div className="space-y-3">
                   {nodes.map((n) => {
                     const cny = nodeCnyPrices[n.id];
                     const daysLeft = n.expires_at
@@ -972,7 +1023,8 @@ export default function Admin() {
                       : null;
                     const online = (Date.now() - new Date(n.last_seen).getTime()) < 120_000;
                     return (
-                      <div key={n.id} className={`${CARD} p-4`}>
+                      <SortableNodeRow key={n.id} id={n.id}>
+                        <div className={`${CARD} p-4 pl-8`}>
                         <div className="flex items-start gap-4 flex-wrap">
                           {/* 主机信息 */}
                           <div className="flex-1 min-w-0 space-y-1">
@@ -1057,10 +1109,13 @@ export default function Admin() {
                             </div>
                           </div>
                         </div>
-                      </div>
+                        </div>
+                      </SortableNodeRow>
                     );
                   })}
-                </div>
+                  </div>
+                  </SortableContext>
+                </DndContext>
               )}
 
             </div>
