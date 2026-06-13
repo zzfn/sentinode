@@ -1758,8 +1758,18 @@ async fn main() -> Result<()> {
         .layer(
             CorsLayer::new()
                 .allow_origin(AllowOrigin::mirror_request())
-                .allow_methods(tower_http::cors::Any)
-                .allow_headers(tower_http::cors::Any)
+                .allow_methods([
+                    axum::http::Method::GET,
+                    axum::http::Method::POST,
+                    axum::http::Method::PUT,
+                    axum::http::Method::DELETE,
+                    axum::http::Method::OPTIONS,
+                ])
+                .allow_headers([
+                    axum::http::header::CONTENT_TYPE,
+                    axum::http::header::AUTHORIZATION,
+                    axum::http::header::COOKIE,
+                ])
                 .allow_credentials(true),
         )
         .fallback_service(grpc_router);
