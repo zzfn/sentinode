@@ -60,6 +60,10 @@ async function fetchBackups(): Promise<{ configured: boolean; backups: BackupRec
 async function triggerBackup(): Promise<void> {
   await fetch(`${SERVER_URL}/api/admin/backup/trigger`, { method: "POST", credentials: "include" });
 }
+async function testBackupConn(): Promise<{ ok: boolean; message?: string; error?: string }> {
+  const r = await fetch(`${SERVER_URL}/api/admin/backup/test`, { method: "POST", credentials: "include" });
+  return r.json();
+}
 
 // ── 公共样式常量 ──────────────────────────────────────────────────────────────
 
@@ -957,6 +961,8 @@ export default function Admin() {
   const [backups, setBackups] = useState<{ configured: boolean; backups: BackupRecord[] } | null>(null);
   const [backupLoading, setBackupLoading] = useState(false);
   const [backupTriggerLoading, setBackupTriggerLoading] = useState(false);
+  const [backupTestLoading, setBackupTestLoading] = useState(false);
+  const [backupTestResult, setBackupTestResult] = useState<{ ok: boolean; message?: string; error?: string } | null>(null);
 
   useEffect(() => {
     if (nav !== "backup") return;
@@ -1335,24 +1341,44 @@ export default function Admin() {
           {/* 数据备份 */}
           {nav === "backup" && (
             <div className="space-y-4">
-              <div className="flex items-center justify-between">
+              <div className="flex items-center justify-between gap-2">
                 <h2 className="text-lg font-bold text-[var(--color-ink)]" style={{ fontFamily: "var(--font-display)" }}>
                   数据备份
                 </h2>
-                <button
-                  onClick={async () => {
-                    setBackupTriggerLoading(true);
-                    await triggerBackup();
-                    setTimeout(() => {
-                      fetchBackups().then(setBackups);
-                      setBackupTriggerLoading(false);
-                    }, 2000);
-                  }}
-                  disabled={backupTriggerLoading || backups?.configured === false}
-                  className="px-4 py-2 rounded-xl text-sm font-semibold border-2 border-[var(--color-ink)] bg-[var(--color-emerald)] text-[var(--color-ink)] shadow-[2px_2px_0_0_#1E293B] hover:shadow-[3px_3px_0_0_#1E293B] hover:-translate-x-px hover:-translate-y-px transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  {backupTriggerLoading ? "备份中..." : "立即备份"}
-                </button>
+                <div className="flex items-center gap-2">
+                  {backupTestResult && (
+                    <span className={`text-xs font-semibold px-2 py-1 rounded-lg border border-[var(--color-ink)] ${backupTestResult.ok ? "bg-[var(--color-emerald)]" : "bg-red-300"}`}>
+                      {backupTestResult.ok ? `✓ ${backupTestResult.message}` : `✗ ${backupTestResult.error}`}
+                    </span>
+                  )}
+                  <button
+                    onClick={async () => {
+                      setBackupTestLoading(true);
+                      setBackupTestResult(null);
+                      const res = await testBackupConn();
+                      setBackupTestResult(res);
+                      setBackupTestLoading(false);
+                    }}
+                    disabled={backupTestLoading || backups?.configured === false}
+                    className="px-3 py-2 rounded-xl text-sm font-semibold border-2 border-[var(--color-ink)] bg-white text-[var(--color-ink)] shadow-[2px_2px_0_0_#1E293B] hover:shadow-[3px_3px_0_0_#1E293B] hover:-translate-x-px hover:-translate-y-px transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {backupTestLoading ? "测试中..." : "测试连通性"}
+                  </button>
+                  <button
+                    onClick={async () => {
+                      setBackupTriggerLoading(true);
+                      await triggerBackup();
+                      setTimeout(() => {
+                        fetchBackups().then(setBackups);
+                        setBackupTriggerLoading(false);
+                      }, 2000);
+                    }}
+                    disabled={backupTriggerLoading || backups?.configured === false}
+                    className="px-4 py-2 rounded-xl text-sm font-semibold border-2 border-[var(--color-ink)] bg-[var(--color-emerald)] text-[var(--color-ink)] shadow-[2px_2px_0_0_#1E293B] hover:shadow-[3px_3px_0_0_#1E293B] hover:-translate-x-px hover:-translate-y-px transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {backupTriggerLoading ? "备份中..." : "立即备份"}
+                  </button>
+                </div>
               </div>
 
               {backups?.configured === false && (

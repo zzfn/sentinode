@@ -869,6 +869,34 @@ async fn trigger_backup(State(s): State<AppState>) -> Result<Json<serde_json::Va
     Ok(Json(json!({ "ok": true, "message": "备份已开始" })))
 }
 
+async fn test_backup(State(s): State<AppState>) -> Json<serde_json::Value> {
+    let Some(r2) = s.r2_config.clone() else {
+        return Json(json!({ "ok": false, "error": "R2 未配置" }));
+    };
+    use aws_sdk_s3::config::{Builder as S3Builder, Credentials, Region};
+    use aws_sdk_s3::Client as S3Client;
+    let endpoint = format!("https://{}.r2.cloudflarestorage.com", r2.account_id);
+    let creds = Credentials::new(&r2.access_key, &r2.secret_key, None, None, "r2");
+    let cfg = S3Builder::new()
+        .endpoint_url(&endpoint)
+        .credentials_provider(creds)
+        .region(Region::new("auto"))
+        .behavior_version(aws_sdk_s3::config::BehaviorVersion::latest())
+        .build();
+    let client = S3Client::from_conf(cfg);
+    match client
+        .put_object()
+        .bucket(&r2.bucket)
+        .key(".sentinode-connectivity-test")
+        .body(aws_sdk_s3::primitives::ByteStream::from(b"ok".to_vec()))
+        .send()
+        .await
+    {
+        Ok(_) => Json(json!({ "ok": true, "message": "连通性正常" })),
+        Err(e) => Json(json!({ "ok": false, "error": e.to_string() })),
+    }
+}
+
 // ── REST 处理函数 ─────────────────────────────────────────────────────────────
 
 async fn get_node(
@@ -2114,6 +2142,7 @@ async fn main() -> Result<()> {
         .route("/visitors", get(admin_visitors))
         .route("/backup", get(list_backups))
         .route("/backup/trigger", axum::routing::post(trigger_backup))
+        .route("/backup/test", axum::routing::post(test_backup))
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
             require_admin,
