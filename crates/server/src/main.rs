@@ -460,6 +460,7 @@ struct NodeResponse {
     net_tx_rate: Option<i64>,
     country_code: Option<String>,
     location: Option<String>,
+    agent_version: Option<String>,
 }
 
 impl From<NodeRow> for NodeResponse {
@@ -481,6 +482,7 @@ impl From<NodeRow> for NodeResponse {
             net_tx_rate: r.net_tx_rate,
             country_code: r.country_code.clone(),
             location: r.location.clone(),
+            agent_version: r.agent_version.clone(),
         }
     }
 }
