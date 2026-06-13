@@ -311,7 +311,7 @@ function AddAgentDialog({
   onClose: () => void;
   serverUrl: string;
   onTokenCreated: (tok: AgentToken) => void;
-  onNodeConnected: () => void;
+  onNodeConnected: (node: AdminNode) => void;
 }) {
   const [step, setStep] = useState<DialogStep>("name");
   const [name, setName] = useState("");
@@ -351,7 +351,7 @@ function AddAgentDialog({
           const connectedNode = nodes.find((n) => n.token === tok.token && n.hostname && n.connected);
           if (connectedNode) {
             clearInterval(pollRef.current!); pollRef.current = null;
-            onNodeConnected();
+            onNodeConnected(connectedNode);
             setConnectedHostname(connectedNode.name || connectedNode.hostname); setStep("success");
           }
         } catch {}
@@ -995,8 +995,14 @@ export default function Admin() {
     setTokens((prev) => [tok, ...prev]);
   }
 
-  function handleNodeConnected() {
-    fetchAdminNodes().then(setNodes).catch(() => {});
+  function handleNodeConnected(connectedNode: AdminNode) {
+    setNodes((prev) => {
+      const idx = prev.findIndex((n) => n.id === connectedNode.id);
+      if (idx === -1) return [...prev, connectedNode];
+      const next = [...prev];
+      next[idx] = connectedNode;
+      return next;
+    });
   }
 
   function handleNodeSaved(id: string, updated: Partial<AdminNode>) {
