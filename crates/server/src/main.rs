@@ -769,7 +769,7 @@ async fn sse_events(
                 n.name, n.token AS token_value,
                 n.cpu_model, n.net_rx_rate, n.net_tx_rate, n.country_code, n.location,
                 n.agent_version, n.price_period_months
-         FROM nodes n WHERE n.hostname IS NOT NULL ORDER BY n.last_seen DESC",
+         FROM nodes n WHERE n.hostname IS NOT NULL ORDER BY n.sort_order ASC, n.last_seen DESC",
     )
     .fetch_all(&s.db)
     .await
@@ -1275,14 +1275,15 @@ async fn update_node_meta(
 
 #[derive(Deserialize)]
 struct ReorderReq {
-    ids: Vec<i64>,
+    ids: Vec<String>,
 }
 
 async fn reorder_nodes(
     State(s): State<AppState>,
     Json(req): Json<ReorderReq>,
 ) -> Result<StatusCode, StatusCode> {
-    for (i, id) in req.ids.iter().enumerate() {
+    for (i, id_str) in req.ids.iter().enumerate() {
+        let id: i64 = id_str.parse().map_err(|_| StatusCode::BAD_REQUEST)?;
         sqlx::query("UPDATE nodes SET sort_order=$1 WHERE id=$2")
             .bind(i as i32)
             .bind(id)

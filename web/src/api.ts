@@ -134,7 +134,7 @@ export async function reorderNodes(ids: string[]): Promise<void> {
   const r = await adminFetch(`${BASE}/admin/nodes/reorder`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ ids: ids.map(Number) }),
+    body: JSON.stringify({ ids }),
   });
   if (!r.ok) throw new Error(`HTTP ${r.status}`);
 }
