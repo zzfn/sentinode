@@ -1198,6 +1198,19 @@ async fn update_node_meta(
     Ok(StatusCode::NO_CONTENT)
 }
 
+async fn reset_node_geo(
+    State(s): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<StatusCode, StatusCode> {
+    let id: i64 = id.parse().map_err(|_| StatusCode::BAD_REQUEST)?;
+    sqlx::query("UPDATE nodes SET country_code=NULL, location=NULL WHERE id=$1")
+        .bind(id)
+        .execute(&s.db)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
 // ── 管理统计 ──────────────────────────────────────────────────────────────────
 
 #[derive(Serialize)]
@@ -1781,6 +1794,7 @@ async fn main() -> Result<()> {
         .route("/nodes", get(admin_list_nodes))
         .route("/nodes/{id}", put(update_node_meta).delete(delete_node))
         .route("/nodes/{id}/upgrade", axum::routing::post(trigger_upgrade))
+        .route("/nodes/{id}/reset-geo", axum::routing::post(reset_node_geo))
         .route("/stats", get(admin_stats))
         .route("/visitors", get(admin_visitors))
         .layer(axum::middleware::from_fn_with_state(

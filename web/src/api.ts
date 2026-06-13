@@ -118,6 +118,11 @@ export async function adminLogout(): Promise<void> {
   window.location.replace("/app/login");
 }
 
+export async function resetNodeGeo(id: string): Promise<void> {
+  const r = await adminFetch(`${BASE}/admin/nodes/${id}/reset-geo`, { method: "POST" });
+  if (!r.ok) throw new Error(`HTTP ${r.status}`);
+}
+
 export async function deleteNode(id: string): Promise<void> {
   const r = await adminFetch(`${BASE}/admin/nodes/${id}`, { method: "DELETE" });
   if (!r.ok) throw new Error(`HTTP ${r.status}`);

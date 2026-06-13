@@ -4,7 +4,7 @@ import {
   AdminNode, AdminStats, AgentToken, SERVER_URL, VisitorEntry, VisitorStats,
   adminLogout, countryFlagUrl, createToken, deleteNode, deleteToken,
   fetchAdminNodes, fetchAdminStats, fetchTokens, fetchVisitors,
-  subscribeNodes, toCNY, toggleLatencyTest, triggerUpgrade, updateNodeMeta,
+  resetNodeGeo, subscribeNodes, toCNY, toggleLatencyTest, triggerUpgrade, updateNodeMeta,
 } from "../api";
 import { relativeTime } from "../utils";
 import { Alert, AlertDescription } from "../components/ui/alert";
@@ -88,6 +88,7 @@ function EditNodeDialog({
   const [saving, setSaving] = useState(false);
   const [countryCode, setCountryCode] = useState("");
   const [location, setLocation] = useState("");
+  const [resettingGeo, setResettingGeo] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [cnyPreview, setCnyPreview] = useState<string | null>(null);
 
@@ -166,13 +167,30 @@ function EditNodeDialog({
             <Label className="text-xs font-semibold text-[var(--color-muted-foreground)] uppercase tracking-wider">官网地址</Label>
             <Input type="url" placeholder="https://example.com" value={websiteUrl} onChange={(e) => setWebsiteUrl(e.target.value)} />
           </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-1.5">
-              <Label className="text-xs font-semibold text-[var(--color-muted-foreground)] uppercase tracking-wider">国家代码</Label>
-              <Input placeholder="HK / JP / US" value={countryCode} onChange={(e) => setCountryCode(e.target.value)} maxLength={2} className="uppercase" />
+          <div className="space-y-1.5">
+            <div className="flex items-center justify-between">
+              <Label className="text-xs font-semibold text-[var(--color-muted-foreground)] uppercase tracking-wider">地理位置</Label>
+              <button
+                type="button"
+                className="text-xs text-[var(--color-muted-foreground)] hover:text-[var(--color-ink)] underline disabled:opacity-50"
+                disabled={resettingGeo}
+                onClick={async () => {
+                  if (!node) return;
+                  setResettingGeo(true);
+                  try {
+                    await resetNodeGeo(node.id);
+                    setCountryCode("");
+                    setLocation("");
+                  } finally {
+                    setResettingGeo(false);
+                  }
+                }}
+              >
+                {resettingGeo ? "重置中…" : "重新查询 IP 归属"}
+              </button>
             </div>
-            <div className="space-y-1.5">
-              <Label className="text-xs font-semibold text-[var(--color-muted-foreground)] uppercase tracking-wider">地区名称</Label>
+            <div className="grid grid-cols-2 gap-3">
+              <Input placeholder="HK / JP / US" value={countryCode} onChange={(e) => setCountryCode(e.target.value)} maxLength={2} className="uppercase" />
               <Input placeholder="香港 / 东京" value={location} onChange={(e) => setLocation(e.target.value)} />
             </div>
           </div>
