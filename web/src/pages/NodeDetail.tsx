@@ -153,6 +153,11 @@ export default function NodeDetail() {
   const [chartLoading, setChartLoading] = useState(false);
   const [smoothLatency, setSmoothLatency] = useState(false);
 
+  useEffect(() => {
+    const name = node?.name || node?.hostname || id;
+    document.title = name ? `${name} · Sentinode` : "Sentinode";
+  }, [node, id]);
+
   // 初始加载节点信息 + 1h 数据
   useEffect(() => {
     if (!id) return;

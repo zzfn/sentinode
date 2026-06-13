@@ -1,7 +1,8 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { SERVER_URL } from "../api";
 
 export default function Login() {
+  useEffect(() => { document.title = "登录 · Sentinode"; }, []);
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);

@@ -93,6 +93,8 @@ export default function Status() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  useEffect(() => { document.title = "状态页 · Sentinode"; }, []);
+
   useEffect(() => {
     sendBeacon("/status");
     const interval = setInterval(() => sendBeacon("/status"), 60_000);

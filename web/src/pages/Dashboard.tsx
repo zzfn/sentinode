@@ -215,6 +215,8 @@ export default function Dashboard() {
   const [lastUpdatedAt, setLastUpdatedAt] = useState<number | null>(null);
   useSecondTick();
 
+  useEffect(() => { document.title = "Sentinode"; }, []);
+
   useEffect(() => {
     sendBeacon("/").then((info) => { if (info) setVisitorInfo(info); });
     const interval = setInterval(() => sendBeacon("/"), 60_000);

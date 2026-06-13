@@ -920,6 +920,7 @@ function useSecondTick() {
 
 export default function Admin() {
   useSecondTick();
+  useEffect(() => { document.title = "管理后台 · Sentinode"; }, []);
   const serverUrl = SERVER_URL;
   const [location, navigate] = useLocation();
   const nav: NavItem = (["visitors", "db", "cost", "nodes"] as NavItem[])
