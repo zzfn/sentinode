@@ -17,7 +17,12 @@ COPY . .
 RUN cargo build --release --bin sentinode-server
 
 FROM ubuntu:24.04
-RUN apt-get update && apt-get install -y ca-certificates libssl3 postgresql-client && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y ca-certificates libssl3 curl gnupg lsb-release && \
+    curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc | gpg --dearmor -o /usr/share/keyrings/postgresql.gpg && \
+    echo "deb [signed-by=/usr/share/keyrings/postgresql.gpg] https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" \
+      > /etc/apt/sources.list.d/pgdg.list && \
+    apt-get update && apt-get install -y postgresql-client-18 && \
+    rm -rf /var/lib/apt/lists/*
 COPY --from=builder /app/target/release/sentinode-server /usr/local/bin/
 EXPOSE 8080
 CMD ["sentinode-server"]
