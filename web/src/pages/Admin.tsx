@@ -345,7 +345,7 @@ function AddAgentDialog({
           if (connectedNode) {
             clearInterval(pollRef.current!); pollRef.current = null;
             onNodeConnected();
-            setConnectedHostname(connectedNode.hostname); setStep("success");
+            setConnectedHostname(connectedNode.name || connectedNode.hostname); setStep("success");
           }
         } catch {}
       }, 3000);
