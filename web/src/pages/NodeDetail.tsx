@@ -756,7 +756,7 @@ export default function NodeDetail() {
                           tick={{ fontSize: 10 }}
                           width={42}
                           unit=" ms"
-                          domain={[0, "auto"]}
+                          domain={["auto", "auto"]}
                         />
                         <ChartTooltip
                           content={
@@ -807,7 +807,7 @@ export default function NodeDetail() {
                       <LineChart data={chartData} margin={{ top: 4, right: 8, bottom: 0, left: 0 }}>
                         <CartesianGrid strokeDasharray="3 3" stroke="rgba(128,128,128,0.12)" />
                         <XAxis dataKey="time" tick={{ fontSize: 10 }} interval="preserveStartEnd" />
-                        <YAxis tick={{ fontSize: 10 }} width={46} unit=" MB/s" />
+                        <YAxis tick={{ fontSize: 10 }} width={46} unit=" MB/s" domain={["auto", "auto"]} />
                         <ChartTooltip content={<ChartTooltipContent formatter={(v) => [typeof v === "number" ? `${v} MB/s` : String(v)]} />} />
                         <Line type="monotone" dataKey="rxMbps" stroke="var(--color-rxMbps)" dot={false} strokeWidth={2} connectNulls={false} />
                         <Line type="monotone" dataKey="txMbps" stroke="var(--color-txMbps)" dot={false} strokeWidth={2} connectNulls={false} />
