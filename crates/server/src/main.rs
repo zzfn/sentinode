@@ -1774,31 +1774,52 @@ async fn init_schema(pool: &PgPool) -> Result<()> {
         .await
         .ok();
 
-    // 新增 jitter 和 loss 列
-    sqlx::query("ALTER TABLE nodes ADD COLUMN IF NOT EXISTS latency_cu_jitter FLOAT")
+    // 新增 jitter 和 loss 列（用 REAL=float4，与 Rust f32 匹配）
+    sqlx::query("ALTER TABLE nodes ADD COLUMN IF NOT EXISTS latency_cu_jitter REAL")
         .execute(pool)
         .await
         .ok();
-    sqlx::query("ALTER TABLE nodes ADD COLUMN IF NOT EXISTS latency_cm_jitter FLOAT")
+    sqlx::query("ALTER TABLE nodes ADD COLUMN IF NOT EXISTS latency_cm_jitter REAL")
         .execute(pool)
         .await
         .ok();
-    sqlx::query("ALTER TABLE nodes ADD COLUMN IF NOT EXISTS latency_ct_jitter FLOAT")
+    sqlx::query("ALTER TABLE nodes ADD COLUMN IF NOT EXISTS latency_ct_jitter REAL")
         .execute(pool)
         .await
         .ok();
-    sqlx::query("ALTER TABLE nodes ADD COLUMN IF NOT EXISTS latency_cu_loss FLOAT")
+    sqlx::query("ALTER TABLE nodes ADD COLUMN IF NOT EXISTS latency_cu_loss REAL")
         .execute(pool)
         .await
         .ok();
-    sqlx::query("ALTER TABLE nodes ADD COLUMN IF NOT EXISTS latency_cm_loss FLOAT")
+    sqlx::query("ALTER TABLE nodes ADD COLUMN IF NOT EXISTS latency_cm_loss REAL")
         .execute(pool)
         .await
         .ok();
-    sqlx::query("ALTER TABLE nodes ADD COLUMN IF NOT EXISTS latency_ct_loss FLOAT")
+    sqlx::query("ALTER TABLE nodes ADD COLUMN IF NOT EXISTS latency_ct_loss REAL")
         .execute(pool)
         .await
         .ok();
+
+    // 修正：若列已以 float8 (DOUBLE PRECISION) 创建，转换为 float4 (REAL) 与 f32 匹配
+    for col in &[
+        "latency_cu_jitter",
+        "latency_cm_jitter",
+        "latency_ct_jitter",
+        "latency_cu_loss",
+        "latency_cm_loss",
+        "latency_ct_loss",
+    ] {
+        let sql = format!(
+            "DO $$ BEGIN
+             IF EXISTS (SELECT 1 FROM information_schema.columns
+                        WHERE table_name='nodes' AND column_name='{col}'
+                        AND data_type='double precision') THEN
+               ALTER TABLE nodes ALTER COLUMN {col} TYPE REAL;
+             END IF;
+             END $$"
+        );
+        sqlx::query(&sql).execute(pool).await.ok();
+    }
 
     Ok(())
 }
