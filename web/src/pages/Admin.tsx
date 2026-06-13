@@ -913,10 +913,8 @@ function SortableNodeRow({ id, children }: { id: string; children: React.ReactNo
 export default function Admin() {
   const serverUrl = SERVER_URL;
   const [location, navigate] = useLocation();
-  const nav: NavItem =
-    location.startsWith("/app/visitors") ? "visitors" :
-    location.startsWith("/app/db") ? "db" :
-    location.startsWith("/app/cost") ? "cost" : "nodes";
+  const nav: NavItem = (["visitors", "db", "cost", "nodes"] as NavItem[])
+    .find((k) => location.startsWith(`/app/${k}`)) ?? "nodes";
   const [nodes, setNodes] = useState<AdminNode[]>([]);
   const [tokens, setTokens] = useState<AgentToken[]>([]);
   const [dialogOpen, setDialogOpen] = useState(false);
