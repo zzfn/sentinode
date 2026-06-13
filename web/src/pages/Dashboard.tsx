@@ -1,7 +1,6 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "wouter";
 import { countryFlagUrl, fmtBandwidth, sendBeacon, subscribeNodes, type BeaconInfo, type Node } from "../api";
-import { relativeTime } from "../utils";
 
 function isOnline(lastSeen: string): boolean {
   return Date.now() - new Date(lastSeen).getTime() < 2 * 60 * 1000;
@@ -178,18 +177,32 @@ function NodeCard({ node }: { node: Node }) {
         </div>
       )}
 
-      {/* 最后上报 */}
-      <p className="text-[11px] text-[var(--color-muted-foreground)] mt-auto pt-1 border-t border-[var(--color-border)]">
-        {relativeTime(node.last_seen)}
-      </p>
     </div>
   );
+}
+
+function useSecondTick() {
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    const id = setInterval(() => setTick((t) => t + 1), 1000);
+    return () => clearInterval(id);
+  }, []);
+}
+
+function fmtUpdatedAgo(ts: number): string {
+  const secs = Math.floor((Date.now() - ts) / 1000);
+  if (secs < 5) return "刚刚";
+  if (secs < 60) return `${secs} 秒前`;
+  return `${Math.floor(secs / 60)} 分钟前`;
 }
 
 export default function Dashboard() {
   const [nodes, setNodes] = useState<Node[]>([]);
   const [connected, setConnected] = useState(false);
   const [visitorInfo, setVisitorInfo] = useState<BeaconInfo | null>(null);
+  const lastUpdatedRef = useRef<number | null>(null);
+  const [lastUpdatedAt, setLastUpdatedAt] = useState<number | null>(null);
+  useSecondTick();
 
   useEffect(() => {
     sendBeacon("/").then((info) => { if (info) setVisitorInfo(info); });
@@ -202,6 +215,8 @@ export default function Dashboard() {
     const unsub = subscribeNodes((updated) => {
       if (cancelled) return;
       setConnected(true);
+      lastUpdatedRef.current = Date.now();
+      setLastUpdatedAt(Date.now());
       setNodes((prev) => {
         const idx = prev.findIndex((n) => n.id === updated.id);
         if (idx === -1) return [...prev, updated];
@@ -287,6 +302,17 @@ export default function Dashboard() {
                         <span className="text-[var(--color-border)]">·</span>
                         <span className="text-xs font-semibold text-red-400">
                           {offlineCount} 离线
+                        </span>
+                      </>
+                    )}
+                    {lastUpdatedAt && (
+                      <>
+                        <span className="text-[var(--color-border)]">·</span>
+                        <span
+                          className="text-xs text-[var(--color-muted-foreground)] cursor-default"
+                          title={new Date(lastUpdatedAt).toLocaleTimeString()}
+                        >
+                          {fmtUpdatedAgo(lastUpdatedAt)}
                         </span>
                       </>
                     )}
