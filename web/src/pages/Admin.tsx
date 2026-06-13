@@ -910,7 +910,16 @@ function SortableNodeRow({ id, children }: { id: string; children: React.ReactNo
   );
 }
 
+function useSecondTick() {
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    const id = setInterval(() => setTick((t) => t + 1), 1000);
+    return () => clearInterval(id);
+  }, []);
+}
+
 export default function Admin() {
+  useSecondTick();
   const serverUrl = SERVER_URL;
   const [location, navigate] = useLocation();
   const nav: NavItem = (["visitors", "db", "cost", "nodes"] as NavItem[])
