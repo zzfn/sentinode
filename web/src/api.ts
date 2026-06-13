@@ -143,6 +143,12 @@ export async function deleteNode(id: string): Promise<void> {
   if (!r.ok) throw new Error(`HTTP ${r.status}`);
 }
 
+export async function fetchNodes(): Promise<Node[]> {
+  const r = await fetch(`${BASE}/nodes`);
+  if (!r.ok) throw new Error(`HTTP ${r.status}`);
+  return r.json();
+}
+
 export async function fetchNode(id: string): Promise<Node> {
   const r = await fetch(`${BASE}/nodes/${id}`);
   if (!r.ok) throw new Error(`HTTP ${r.status}`);

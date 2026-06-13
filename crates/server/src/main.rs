@@ -688,6 +688,21 @@ fn is_private_ip(ip: &str) -> bool {
 
 // ── REST 处理函数 ─────────────────────────────────────────────────────────────
 
+async fn list_nodes(State(s): State<AppState>) -> Result<Json<Vec<NodeResponse>>, StatusCode> {
+    let rows = sqlx::query_as::<_, NodeRow>(
+        "SELECT id, hostname, ip, os, arch, last_seen, expires_at, price, price_currency, website_url,
+                latency_test_enabled, latency_cu_ms, latency_cm_ms, latency_ct_ms, latency_updated_at,
+                name, token AS token_value, cpu_model, net_rx_rate, net_tx_rate, country_code, location,
+                agent_version, price_period_months
+         FROM nodes WHERE hostname IS NOT NULL
+         ORDER BY sort_order ASC, last_seen DESC",
+    )
+    .fetch_all(&s.db)
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(Json(rows.into_iter().map(Into::into).collect()))
+}
+
 async fn get_node(
     State(s): State<AppState>,
     Path(id): Path<String>,
@@ -1839,6 +1854,7 @@ async fn main() -> Result<()> {
     let app = Router::new()
         .route("/healthz", get(healthz))
         .route("/api/events", get(sse_events))
+        .route("/api/nodes", get(list_nodes))
         .route("/api/nodes/{id}", get(get_node))
         .route("/api/nodes/{id}/metrics", get(node_metrics))
         .route("/api/admin/login", post(admin_login))

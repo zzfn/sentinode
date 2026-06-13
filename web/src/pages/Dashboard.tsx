@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Link } from "wouter";
-import { countryFlagUrl, fmtBandwidth, sendBeacon, subscribeNodes, type BeaconInfo, type Node } from "../api";
+import { countryFlagUrl, fetchNodes, fmtBandwidth, sendBeacon, subscribeNodes, type BeaconInfo, type Node } from "../api";
 
 function isOnline(lastSeen: string): boolean {
   return Date.now() - new Date(lastSeen).getTime() < 2 * 60 * 1000;
@@ -200,6 +200,7 @@ export default function Dashboard() {
   useSecondTick();
 
   useEffect(() => {
+    fetchNodes().then((ns) => setNodes(ns)).catch(() => {});
     sendBeacon("/").then((info) => { if (info) setVisitorInfo(info); });
     const interval = setInterval(() => sendBeacon("/"), 60_000);
     return () => clearInterval(interval);
