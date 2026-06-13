@@ -130,11 +130,6 @@ function NodeCard({ node }: { node: Node }) {
         >
           {node.name || node.hostname}
         </h2>
-        {node.name && (
-          <p className="text-xs font-mono text-[var(--color-muted-foreground)] opacity-60 mt-0.5">
-            {node.hostname}
-          </p>
-        )}
         <p className="text-sm text-[var(--color-muted-foreground)] mt-0.5 leading-snug">
           {node.os}
           <span className="mx-1.5 opacity-40">·</span>
