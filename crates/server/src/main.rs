@@ -307,14 +307,52 @@ impl Monitor for MonitorService {
         .await
         .map_err(|e| Status::internal(e.to_string()))?;
 
-        // 更新 nodes 表的实时带宽
-        sqlx::query("UPDATE nodes SET net_rx_rate=$1, net_tx_rate=$2 WHERE id=$3")
-            .bind(m.net_rx_rate as i64)
-            .bind(m.net_tx_rate as i64)
-            .bind(node_id)
-            .execute(&self.db)
-            .await
-            .map_err(|e| Status::internal(e.to_string()))?;
+        // 硬盘取容量最大的盘作为主盘；累计流量汇总非 lo 接口
+        let (disk_used, disk_total) = m
+            .disks
+            .iter()
+            .max_by_key(|d| d.total_bytes)
+            .map(|d| (d.used_bytes as i64, d.total_bytes as i64))
+            .unwrap_or((0, 0));
+        let (net_rx_total, net_tx_total) = m
+            .networks
+            .iter()
+            .filter(|n| !n.interface.starts_with("lo"))
+            .fold((0i64, 0i64), |(rx, tx), n| {
+                (rx + n.rx_bytes as i64, tx + n.tx_bytes as i64)
+            });
+
+        // 方案 A：每次上报把最新系统指标写进 nodes 表（节点当前状态权威源），
+        // 首页快照即可一次带全 CPU/内存/负载/硬盘/累计流量，无需等待实时 metric_added
+        sqlx::query(
+            "UPDATE nodes SET
+             net_rx_rate=$1, net_tx_rate=$2,
+             cpu_percent=$3, mem_used=$4, mem_total=$5, swap_used=$6, swap_total=$7,
+             load1=$8, load5=$9, load15=$10, uptime_secs=$11, tcp_connections=$12,
+             disk_used=$13, disk_total=$14, net_rx_total=$15, net_tx_total=$16,
+             metrics_updated_at=NOW()
+             WHERE id=$17",
+        )
+        .bind(m.net_rx_rate as i64)
+        .bind(m.net_tx_rate as i64)
+        .bind(m.cpu_percent)
+        .bind(m.mem_used as i64)
+        .bind(m.mem_total as i64)
+        .bind(m.swap_used as i64)
+        .bind(m.swap_total as i64)
+        .bind(m.load1)
+        .bind(m.load5)
+        .bind(m.load15)
+        .bind(node.uptime_secs as i64)
+        .bind(m.tcp_connections as i32)
+        .bind(disk_used)
+        .bind(disk_total)
+        .bind(net_rx_total)
+        .bind(net_tx_total)
+        .bind(node_id)
+        .execute(&self.db)
+        .await
+        .map_err(|e| Status::internal(e.to_string()))?;
 
         // 若有延迟数据，同时更新 nodes 表当前值（含 jitter 和 loss）
         if lat_cu.is_some() || lat_cm.is_some() || lat_ct.is_some() {
@@ -342,7 +380,7 @@ impl Monitor for MonitorService {
 
         // 查询完整节点信息（用于广播和返回开关状态）
         let row = sqlx::query_as::<_, NodeRow>(
-            "SELECT id, hostname, ip, os, arch, last_seen, expires_at, price, price_currency, website_url, latency_test_enabled, latency_cu_ms, latency_cm_ms, latency_ct_ms, latency_cu_jitter, latency_cm_jitter, latency_ct_jitter, latency_cu_loss, latency_cm_loss, latency_ct_loss, latency_updated_at, name, token AS token_value, cpu_model, net_rx_rate, net_tx_rate, country_code, location, agent_version, price_period_months FROM nodes WHERE id = $1",
+            "SELECT id, hostname, ip, os, arch, last_seen, expires_at, price, price_currency, website_url, latency_test_enabled, latency_cu_ms, latency_cm_ms, latency_ct_ms, latency_cu_jitter, latency_cm_jitter, latency_ct_jitter, latency_cu_loss, latency_cm_loss, latency_ct_loss, latency_updated_at, name, token AS token_value, cpu_model, net_rx_rate, net_tx_rate, country_code, location, agent_version, price_period_months, cpu_percent, mem_used, mem_total, swap_used, swap_total, load1, load5, load15, uptime_secs, tcp_connections, metrics_updated_at, disk_used, disk_total, net_rx_total, net_tx_total FROM nodes WHERE id = $1",
         )
         .bind(node_id)
         .fetch_one(&self.db)
@@ -396,7 +434,12 @@ impl Monitor for MonitorService {
         }
 
         // 广播 node_updated 事件给所有 SSE 客户端
-        let node_resp: NodeResponse = row.into();
+        // 带上最新延迟历史，避免实时更新把前端格子覆盖成空
+        let mut node_resp: NodeResponse = row.into();
+        node_resp.latency_history = fetch_latency_history(&self.db, &[node_id])
+            .await
+            .remove(&node_id)
+            .unwrap_or_default();
         if let Ok(payload) = serde_json::to_string(&json!({
             "type": "node_updated",
             "data": node_resp,
@@ -498,6 +541,29 @@ struct NodeRow {
     location: Option<String>,
     agent_version: Option<String>,
     price_period_months: Option<i32>,
+    // 方案 A：最新系统指标（nodes 表存节点当前状态）
+    cpu_percent: Option<f32>,
+    mem_used: Option<i64>,
+    mem_total: Option<i64>,
+    swap_used: Option<i64>,
+    swap_total: Option<i64>,
+    load1: Option<f32>,
+    load5: Option<f32>,
+    load15: Option<f32>,
+    uptime_secs: Option<i64>,
+    tcp_connections: Option<i32>,
+    metrics_updated_at: Option<DateTime<Utc>>,
+    disk_used: Option<i64>,
+    disk_total: Option<i64>,
+    net_rx_total: Option<i64>,
+    net_tx_total: Option<i64>,
+}
+
+#[derive(Serialize, Clone, FromRow)]
+struct LatPoint {
+    cu: Option<f32>,
+    cm: Option<f32>,
+    ct: Option<f32>,
 }
 
 #[derive(Serialize)]
@@ -525,6 +591,23 @@ struct NodeResponse {
     country_code: Option<String>,
     location: Option<String>,
     agent_version: Option<String>,
+    // 最新系统指标
+    cpu_percent: Option<f32>,
+    mem_used: Option<i64>,
+    mem_total: Option<i64>,
+    swap_used: Option<i64>,
+    swap_total: Option<i64>,
+    load1: Option<f32>,
+    load5: Option<f32>,
+    load15: Option<f32>,
+    uptime_secs: Option<i64>,
+    tcp_connections: Option<i32>,
+    metrics_updated_at: Option<DateTime<Utc>>,
+    disk_used: Option<i64>,
+    disk_total: Option<i64>,
+    net_rx_total: Option<i64>,
+    net_tx_total: Option<i64>,
+    latency_history: Vec<LatPoint>,
 }
 
 impl From<NodeRow> for NodeResponse {
@@ -553,6 +636,22 @@ impl From<NodeRow> for NodeResponse {
             country_code: r.country_code.clone(),
             location: r.location.clone(),
             agent_version: r.agent_version.clone(),
+            cpu_percent: r.cpu_percent,
+            mem_used: r.mem_used,
+            mem_total: r.mem_total,
+            swap_used: r.swap_used,
+            swap_total: r.swap_total,
+            load1: r.load1,
+            load5: r.load5,
+            load15: r.load15,
+            uptime_secs: r.uptime_secs,
+            tcp_connections: r.tcp_connections,
+            metrics_updated_at: r.metrics_updated_at,
+            disk_used: r.disk_used,
+            disk_total: r.disk_total,
+            net_rx_total: r.net_rx_total,
+            net_tx_total: r.net_tx_total,
+            latency_history: Vec::new(),
         }
     }
 }
@@ -905,14 +1004,50 @@ async fn get_node(
 ) -> Result<Json<NodeResponse>, StatusCode> {
     let id: i64 = id.parse().map_err(|_| StatusCode::BAD_REQUEST)?;
     let row = sqlx::query_as::<_, NodeRow>(
-        "SELECT id, hostname, ip, os, arch, last_seen, expires_at, price, price_currency, website_url, latency_test_enabled, latency_cu_ms, latency_cm_ms, latency_ct_ms, latency_cu_jitter, latency_cm_jitter, latency_ct_jitter, latency_cu_loss, latency_cm_loss, latency_ct_loss, latency_updated_at, name, token AS token_value, cpu_model, net_rx_rate, net_tx_rate, country_code, location, agent_version, price_period_months FROM nodes WHERE id = $1",
+        "SELECT id, hostname, ip, os, arch, last_seen, expires_at, price, price_currency, website_url, latency_test_enabled, latency_cu_ms, latency_cm_ms, latency_ct_ms, latency_cu_jitter, latency_cm_jitter, latency_ct_jitter, latency_cu_loss, latency_cm_loss, latency_ct_loss, latency_updated_at, name, token AS token_value, cpu_model, net_rx_rate, net_tx_rate, country_code, location, agent_version, price_period_months, cpu_percent, mem_used, mem_total, swap_used, swap_total, load1, load5, load15, uptime_secs, tcp_connections, metrics_updated_at, disk_used, disk_total, net_rx_total, net_tx_total FROM nodes WHERE id = $1",
     )
     .bind(id)
     .fetch_optional(&s.db)
     .await
     .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
     .ok_or(StatusCode::NOT_FOUND)?;
-    Ok(Json(row.into()))
+    let id_i64 = row.id;
+    let mut resp: NodeResponse = row.into();
+    resp.latency_history = fetch_latency_history(&s.db, &[id_i64])
+        .await
+        .remove(&id_i64)
+        .unwrap_or_default();
+    Ok(Json(resp))
+}
+
+/// 批量查询每个节点最近 20 条三网延迟历史，按时间升序（老→新）返回
+/// 延迟历史原始行：(node_id, 联通, 移动, 电信)
+type LatHistRow = (i64, Option<f32>, Option<f32>, Option<f32>);
+
+async fn fetch_latency_history(
+    db: &PgPool,
+    node_ids: &[i64],
+) -> std::collections::HashMap<i64, Vec<LatPoint>> {
+    use std::collections::HashMap;
+    let mut map: HashMap<i64, Vec<LatPoint>> = HashMap::new();
+    if node_ids.is_empty() {
+        return map;
+    }
+    let rows: Vec<LatHistRow> = sqlx::query_as(
+        "SELECT node_id, latency_cu_ms, latency_cm_ms, latency_ct_ms FROM (
+            SELECT node_id, latency_cu_ms, latency_cm_ms, latency_ct_ms, reported_at,
+                   ROW_NUMBER() OVER (PARTITION BY node_id ORDER BY reported_at DESC) AS rn
+            FROM metrics WHERE node_id = ANY($1)
+         ) t WHERE rn <= 20 ORDER BY node_id, reported_at ASC",
+    )
+    .bind(node_ids)
+    .fetch_all(db)
+    .await
+    .unwrap_or_default();
+    for (nid, cu, cm, ct) in rows {
+        map.entry(nid).or_default().push(LatPoint { cu, cm, ct });
+    }
+    map
 }
 
 async fn sse_events(
@@ -921,7 +1056,7 @@ async fn sse_events(
     let rx = s.event_tx.subscribe();
 
     // 建立连接时先推送当前所有节点快照
-    let snapshot: Vec<String> = sqlx::query_as::<_, NodeRow>(
+    let rows = sqlx::query_as::<_, NodeRow>(
         "SELECT n.id, n.hostname, n.ip, n.os, n.arch, n.last_seen, n.expires_at,
                 n.price, n.price_currency, n.website_url, n.latency_test_enabled,
                 n.latency_cu_ms, n.latency_cm_ms, n.latency_ct_ms,
@@ -930,18 +1065,26 @@ async fn sse_events(
                 n.latency_updated_at,
                 n.name, n.token AS token_value,
                 n.cpu_model, n.net_rx_rate, n.net_tx_rate, n.country_code, n.location,
-                n.agent_version, n.price_period_months
+                n.agent_version, n.price_period_months,
+                n.cpu_percent, n.mem_used, n.mem_total, n.swap_used, n.swap_total,
+                n.load1, n.load5, n.load15, n.uptime_secs, n.tcp_connections, n.metrics_updated_at,
+                n.disk_used, n.disk_total, n.net_rx_total, n.net_tx_total
          FROM nodes n WHERE n.hostname IS NOT NULL ORDER BY n.sort_order ASC, n.last_seen DESC",
     )
     .fetch_all(&s.db)
     .await
-    .unwrap_or_default()
-    .into_iter()
-    .filter_map(|row| {
-        let resp: NodeResponse = row.into();
-        serde_json::to_string(&json!({ "type": "node_updated", "data": resp })).ok()
-    })
-    .collect();
+    .unwrap_or_default();
+    let ids: Vec<i64> = rows.iter().map(|r| r.id).collect();
+    let hist = fetch_latency_history(&s.db, &ids).await;
+    let snapshot: Vec<String> = rows
+        .into_iter()
+        .filter_map(|row| {
+            let id = row.id;
+            let mut resp: NodeResponse = row.into();
+            resp.latency_history = hist.get(&id).cloned().unwrap_or_default();
+            serde_json::to_string(&json!({ "type": "node_updated", "data": resp })).ok()
+        })
+        .collect();
 
     let snapshot_stream = tokio_stream::iter(
         snapshot
@@ -1356,7 +1499,10 @@ async fn admin_list_nodes(
                 n.latency_updated_at,
                 n.name, n.token AS token_value,
                 n.cpu_model, n.net_rx_rate, n.net_tx_rate, n.country_code, n.location,
-                n.agent_version, n.price_period_months
+                n.agent_version, n.price_period_months,
+                n.cpu_percent, n.mem_used, n.mem_total, n.swap_used, n.swap_total,
+                n.load1, n.load5, n.load15, n.uptime_secs, n.tcp_connections, n.metrics_updated_at,
+                n.disk_used, n.disk_total, n.net_rx_total, n.net_tx_total
          FROM nodes n
          ORDER BY n.hostname IS NULL, n.sort_order ASC, n.last_seen DESC",
     )
@@ -1961,6 +2107,29 @@ async fn init_schema(pool: &PgPool) -> Result<()> {
         .execute(pool)
         .await
         .ok();
+
+    // 方案 A：最新系统指标冗余进 nodes 表，作为节点「当前状态」的唯一权威源，
+    // 使首页快照一次带全（CPU/内存/负载等），无需等待 metric_added 实时事件
+    for ddl in [
+        "ALTER TABLE nodes ADD COLUMN IF NOT EXISTS cpu_percent REAL",
+        "ALTER TABLE nodes ADD COLUMN IF NOT EXISTS mem_used BIGINT",
+        "ALTER TABLE nodes ADD COLUMN IF NOT EXISTS mem_total BIGINT",
+        "ALTER TABLE nodes ADD COLUMN IF NOT EXISTS swap_used BIGINT",
+        "ALTER TABLE nodes ADD COLUMN IF NOT EXISTS swap_total BIGINT",
+        "ALTER TABLE nodes ADD COLUMN IF NOT EXISTS load1 REAL",
+        "ALTER TABLE nodes ADD COLUMN IF NOT EXISTS load5 REAL",
+        "ALTER TABLE nodes ADD COLUMN IF NOT EXISTS load15 REAL",
+        "ALTER TABLE nodes ADD COLUMN IF NOT EXISTS uptime_secs BIGINT",
+        "ALTER TABLE nodes ADD COLUMN IF NOT EXISTS tcp_connections INT",
+        "ALTER TABLE nodes ADD COLUMN IF NOT EXISTS metrics_updated_at TIMESTAMPTZ",
+        // 阶段 B：硬盘（主盘）+ 网络累计流量
+        "ALTER TABLE nodes ADD COLUMN IF NOT EXISTS disk_used BIGINT",
+        "ALTER TABLE nodes ADD COLUMN IF NOT EXISTS disk_total BIGINT",
+        "ALTER TABLE nodes ADD COLUMN IF NOT EXISTS net_rx_total BIGINT",
+        "ALTER TABLE nodes ADD COLUMN IF NOT EXISTS net_tx_total BIGINT",
+    ] {
+        sqlx::query(ddl).execute(pool).await.ok();
+    }
 
     // backups 表
     sqlx::query(

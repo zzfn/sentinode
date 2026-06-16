@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation } from "wouter";
 import {
   AdminNode, AdminStats, AgentToken, SERVER_URL, VisitorEntry, VisitorStats,
@@ -957,6 +957,7 @@ export default function Admin() {
   const [reinstallNode, setReinstallNode] = useState<AdminNode | null>(null);
   const [nodeCnyPrices, setNodeCnyPrices] = useState<Record<string, number | null>>({});
   const [upgradingIds, setUpgradingIds] = useState<Set<string>>(new Set());
+  const [sortBy, setSortBy] = useState<"default" | "expiry-asc" | "expiry-desc" | "offline-first">("default");
   const [error, setError] = useState<string | null>(null);
   const [backups, setBackups] = useState<{ configured: boolean; backups: BackupRecord[] } | null>(null);
   const [backupLoading, setBackupLoading] = useState(false);
@@ -1067,6 +1068,24 @@ export default function Admin() {
     setTimeout(() => setUpgradingIds((prev) => { const s = new Set(prev); s.delete(id); return s; }), 30_000);
   }
 
+  // 批量升级：对所有在线节点触发升级，无需逐个点击
+  async function handleUpgradeAll() {
+    const targets = nodes.filter((n) => (Date.now() - new Date(n.last_seen).getTime()) < 120_000);
+    if (targets.length === 0) return;
+    if (!confirm(`确定升级全部 ${targets.length} 个在线节点？`)) return;
+    setError(null);
+    const ids = targets.map((n) => n.id);
+    setUpgradingIds((prev) => { const s = new Set(prev); ids.forEach((id) => s.add(id)); return s; });
+    const results = await Promise.allSettled(ids.map((id) => triggerUpgrade(id)));
+    const failed = results.filter((r) => r.status === "rejected").length;
+    if (failed > 0) setError(`${failed} 个节点升级触发失败`);
+    setTimeout(() => setUpgradingIds((prev) => {
+      const s = new Set(prev);
+      ids.forEach((id) => s.delete(id));
+      return s;
+    }), 30_000);
+  }
+
   async function handleDeleteToken(id: string) {
     setError(null);
     try {
@@ -1088,6 +1107,130 @@ export default function Admin() {
   }
 
   const onlineCount = nodes.filter((n) => (Date.now() - new Date(n.last_seen).getTime()) < 120_000).length;
+
+  // 按到期时间排序后的展示列表；无到期时间的节点始终排在最后
+  const displayNodes = useMemo(() => {
+    if (sortBy === "default") return nodes;
+    if (sortBy === "offline-first") {
+      // 离线节点排在最前，便于快速发现掉线；同状态内离线时间越久越靠前
+      return [...nodes].sort((a, b) => {
+        const ta = new Date(a.last_seen).getTime();
+        const tb = new Date(b.last_seen).getTime();
+        return ta - tb;
+      });
+    }
+    const withExpiry = nodes.filter((n) => n.expires_at);
+    const withoutExpiry = nodes.filter((n) => !n.expires_at);
+    withExpiry.sort((a, b) => {
+      const ta = new Date(a.expires_at!).getTime();
+      const tb = new Date(b.expires_at!).getTime();
+      return sortBy === "expiry-asc" ? ta - tb : tb - ta;
+    });
+    return [...withExpiry, ...withoutExpiry];
+  }, [nodes, sortBy]);
+
+  // 单个节点卡片内容（拖拽与排序两种模式共用）
+  function renderNodeCard(n: AdminNode) {
+    const cny = nodeCnyPrices[n.id];
+    const daysLeft = n.expires_at
+      ? Math.ceil((new Date(n.expires_at).getTime() - Date.now()) / 86_400_000)
+      : null;
+    const online = (Date.now() - new Date(n.last_seen).getTime()) < 120_000;
+    return (
+      <div className={`${CARD} p-4 pl-8`}>
+        <div className="flex items-start gap-4 flex-wrap">
+          {/* 主机信息 */}
+          <div className="flex-1 min-w-0 space-y-1">
+            <div className="flex items-center gap-2 flex-wrap">
+              {online ? (
+                <span className="relative flex h-2 w-2 flex-shrink-0">
+                  <span className="absolute inline-flex h-full w-full rounded-full opacity-75" style={{ background: "var(--color-emerald)", animation: "ping-slow 1.4s cubic-bezier(0,0,0.2,1) infinite" }} />
+                  <span className="relative inline-flex rounded-full h-2 w-2" style={{ background: "var(--color-emerald)" }} />
+                </span>
+              ) : (
+                <span className="h-2 w-2 rounded-full bg-red-400 flex-shrink-0" />
+              )}
+              {n.country_code && (
+                <img src={countryFlagUrl(n.country_code)!} alt={n.country_code} className="w-5 h-[15px] rounded-sm" />
+              )}
+              <span className="font-bold text-[var(--color-ink)]" style={{ fontFamily: "var(--font-display)" }}>
+                {n.name || n.hostname}
+              </span>
+              {n.name && (
+                <span className="text-[10px] font-mono text-[var(--color-muted-foreground)] opacity-60">{n.hostname}</span>
+              )}
+              {n.location && (
+                <span className="text-xs text-[var(--color-muted-foreground)]">{n.location}</span>
+              )}
+              <code className="text-[10px] font-mono bg-[var(--color-cream)] border border-[var(--color-border)] px-1.5 py-0.5 rounded-lg">
+                {n.ip}
+              </code>
+              {n.agent_version && (
+                <span className="text-[10px] font-mono px-1.5 py-0.5 rounded-lg bg-[var(--color-violet)]/10 border border-[var(--color-violet)]/30 text-[var(--color-violet)]">
+                  v{n.agent_version}
+                </span>
+              )}
+            </div>
+            <div className="flex flex-wrap gap-x-4 gap-y-0.5 text-xs text-[var(--color-muted-foreground)]">
+              {n.os && <span>{n.os}</span>}
+              {n.cpu_model && <span className="truncate max-w-[200px]">{n.cpu_model}</span>}
+              {n.expires_at && (
+                <span className={daysLeft != null && daysLeft <= 7 ? "text-red-500 font-semibold" : daysLeft != null && daysLeft <= 30 ? "text-[var(--color-amber)] font-semibold" : ""}>
+                  {n.website_url ? (
+                    <a href={n.website_url} target="_blank" rel="noopener noreferrer" className="underline underline-offset-2 hover:opacity-70" onClick={(e) => e.stopPropagation()}>
+                      到期 {new Date(n.expires_at!).toLocaleDateString("zh-CN")}
+                    </a>
+                  ) : (
+                    <>到期 {new Date(n.expires_at).toLocaleDateString("zh-CN")}</>
+                  )}
+                  {daysLeft != null && ` (${daysLeft < 0 ? "已过期" : `${daysLeft}天`})`}
+                </span>
+              )}
+              {n.price != null && (
+                <span>
+                  {n.price} {n.price_currency}{n.price_period_months && n.price_period_months > 1 ? ` / ${n.price_period_months}月` : " / 月"}
+                  {cny != null && n.price_currency !== "CNY" && ` ≈ ¥${cny.toFixed(0)}`}
+                </span>
+              )}
+            </div>
+          </div>
+
+          {/* 三网测速开关 + 操作按钮 */}
+          <div className="flex items-center gap-3 flex-wrap">
+            <div className="flex items-center gap-1.5">
+              <span className="text-xs text-[var(--color-muted-foreground)]">三网测速</span>
+              <Switch
+                checked={n.latency_test_enabled}
+                onCheckedChange={(checked) => {
+                  setNodes((prev) => prev.map((x) => x.id === n.id ? { ...x, latency_test_enabled: checked } : x));
+                  toggleLatencyTest(n.id, checked).catch(() =>
+                    setNodes((prev) => prev.map((x) => x.id === n.id ? { ...x, latency_test_enabled: !checked } : x))
+                  );
+                }}
+              />
+            </div>
+            <div className="flex gap-1.5">
+              <Btn variant="outline" onClick={() => setEditNode(n)}>编辑</Btn>
+              <Btn variant="outline" onClick={() => setReinstallNode(n)}>重装</Btn>
+              <Btn
+                variant="outline"
+                disabled={upgradingIds.has(n.id)}
+                onClick={() => handleUpgrade(n.id)}
+              >
+                {upgradingIds.has(n.id) ? "升级中…" : "升级"}
+              </Btn>
+              <Btn
+                variant="danger"
+                onClick={() => { if (confirm(`确定删除节点 ${n.hostname}？`)) handleDeleteNode(n.id); }}
+              >
+                删除
+              </Btn>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   const NAV_ITEMS: { key: NavItem; label: string; dot: string }[] = [
     { key: "nodes", label: "节点管理", dot: "var(--color-emerald)" },
@@ -1199,14 +1342,36 @@ export default function Admin() {
           {/* 节点管理 */}
           {nav === "nodes" && (
             <div className="space-y-4">
-              {/* 标题 */}
-              <div className="flex items-center gap-2">
+              {/* 标题 + 排序 + 批量升级 */}
+              <div className="flex items-center gap-2 flex-wrap">
                 <h2 className="text-lg font-bold text-[var(--color-ink)]" style={{ fontFamily: "var(--font-display)" }}>
                   节点详情
                 </h2>
                 <span className="px-2 py-0.5 rounded-full text-xs font-semibold border-2 border-[var(--color-ink)] bg-white">
                   {nodes.length}
                 </span>
+                <div className="ml-auto flex items-center gap-2">
+                  {/* 排序：到期时间 */}
+                  <Select value={sortBy} onValueChange={(v) => setSortBy(v as typeof sortBy)}>
+                    <SelectTrigger className="w-40 h-9 text-xs">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="default">手动排序</SelectItem>
+                      <SelectItem value="offline-first">服务状态（掉线优先）</SelectItem>
+                      <SelectItem value="expiry-asc">到期时间（近 → 远）</SelectItem>
+                      <SelectItem value="expiry-desc">到期时间（远 → 近）</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  {/* 批量升级 */}
+                  <Btn
+                    variant="outline"
+                    disabled={onlineCount === 0}
+                    onClick={handleUpgradeAll}
+                  >
+                    批量升级（{onlineCount}）
+                  </Btn>
+                </div>
               </div>
 
               {/* 节点卡片列表（移动端友好） */}
@@ -1215,115 +1380,25 @@ export default function Admin() {
                   暂无节点，点击右上角"添加 Agent"开始
                 </div>
               ) : (
-                <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
-                  <SortableContext items={nodes.map((n) => n.id)} strategy={verticalListSortingStrategy}>
+                sortBy === "default" ? (
+                  <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+                    <SortableContext items={displayNodes.map((n) => n.id)} strategy={verticalListSortingStrategy}>
+                      <div className="space-y-3">
+                        {displayNodes.map((n) => (
+                          <SortableNodeRow key={n.id} id={n.id}>
+                            {renderNodeCard(n)}
+                          </SortableNodeRow>
+                        ))}
+                      </div>
+                    </SortableContext>
+                  </DndContext>
+                ) : (
                   <div className="space-y-3">
-                  {nodes.map((n) => {
-                    const cny = nodeCnyPrices[n.id];
-                    const daysLeft = n.expires_at
-                      ? Math.ceil((new Date(n.expires_at).getTime() - Date.now()) / 86_400_000)
-                      : null;
-                    const online = (Date.now() - new Date(n.last_seen).getTime()) < 120_000;
-                    return (
-                      <SortableNodeRow key={n.id} id={n.id}>
-                        <div className={`${CARD} p-4 pl-8`}>
-                        <div className="flex items-start gap-4 flex-wrap">
-                          {/* 主机信息 */}
-                          <div className="flex-1 min-w-0 space-y-1">
-                            <div className="flex items-center gap-2 flex-wrap">
-                              {online ? (
-                                <span className="relative flex h-2 w-2 flex-shrink-0">
-                                  <span className="absolute inline-flex h-full w-full rounded-full opacity-75" style={{ background: "var(--color-emerald)", animation: "ping-slow 1.4s cubic-bezier(0,0,0.2,1) infinite" }} />
-                                  <span className="relative inline-flex rounded-full h-2 w-2" style={{ background: "var(--color-emerald)" }} />
-                                </span>
-                              ) : (
-                                <span className="h-2 w-2 rounded-full bg-red-400 flex-shrink-0" />
-                              )}
-                              {n.country_code && (
-                                <img src={countryFlagUrl(n.country_code)!} alt={n.country_code} className="w-5 h-[15px] rounded-sm" />
-                              )}
-                              <span className="font-bold text-[var(--color-ink)]" style={{ fontFamily: "var(--font-display)" }}>
-                                {n.name || n.hostname}
-                              </span>
-                              {n.name && (
-                                <span className="text-[10px] font-mono text-[var(--color-muted-foreground)] opacity-60">{n.hostname}</span>
-                              )}
-                              {n.location && (
-                                <span className="text-xs text-[var(--color-muted-foreground)]">{n.location}</span>
-                              )}
-                              <code className="text-[10px] font-mono bg-[var(--color-cream)] border border-[var(--color-border)] px-1.5 py-0.5 rounded-lg">
-                                {n.ip}
-                              </code>
-                              {n.agent_version && (
-                                <span className="text-[10px] font-mono px-1.5 py-0.5 rounded-lg bg-[var(--color-violet)]/10 border border-[var(--color-violet)]/30 text-[var(--color-violet)]">
-                                  v{n.agent_version}
-                                </span>
-                              )}
-                            </div>
-                            <div className="flex flex-wrap gap-x-4 gap-y-0.5 text-xs text-[var(--color-muted-foreground)]">
-                              {n.os && <span>{n.os}</span>}
-                              {n.cpu_model && <span className="truncate max-w-[200px]">{n.cpu_model}</span>}
-                              {n.expires_at && (
-                                <span className={daysLeft != null && daysLeft <= 7 ? "text-red-500 font-semibold" : daysLeft != null && daysLeft <= 30 ? "text-[var(--color-amber)] font-semibold" : ""}>
-                                  {n.website_url ? (
-                                    <a href={n.website_url} target="_blank" rel="noopener noreferrer" className="underline underline-offset-2 hover:opacity-70" onClick={(e) => e.stopPropagation()}>
-                                      到期 {new Date(n.expires_at!).toLocaleDateString("zh-CN")}
-                                    </a>
-                                  ) : (
-                                    <>到期 {new Date(n.expires_at).toLocaleDateString("zh-CN")}</>
-                                  )}
-                                  {daysLeft != null && ` (${daysLeft < 0 ? "已过期" : `${daysLeft}天`})`}
-                                </span>
-                              )}
-                              {n.price != null && (
-                                <span>
-                                  {n.price} {n.price_currency}{n.price_period_months && n.price_period_months > 1 ? ` / ${n.price_period_months}月` : " / 月"}
-                                  {cny != null && n.price_currency !== "CNY" && ` ≈ ¥${cny.toFixed(0)}`}
-                                </span>
-                              )}
-                            </div>
-                          </div>
-
-                          {/* 三网测速开关 + 操作按钮 */}
-                          <div className="flex items-center gap-3 flex-wrap">
-                            <div className="flex items-center gap-1.5">
-                              <span className="text-xs text-[var(--color-muted-foreground)]">三网测速</span>
-                              <Switch
-                                checked={n.latency_test_enabled}
-                                onCheckedChange={(checked) => {
-                                  setNodes((prev) => prev.map((x) => x.id === n.id ? { ...x, latency_test_enabled: checked } : x));
-                                  toggleLatencyTest(n.id, checked).catch(() =>
-                                    setNodes((prev) => prev.map((x) => x.id === n.id ? { ...x, latency_test_enabled: !checked } : x))
-                                  );
-                                }}
-                              />
-                            </div>
-                            <div className="flex gap-1.5">
-                              <Btn variant="outline" onClick={() => setEditNode(n)}>编辑</Btn>
-                              <Btn variant="outline" onClick={() => setReinstallNode(n)}>重装</Btn>
-                              <Btn
-                                variant="outline"
-                                disabled={upgradingIds.has(n.id)}
-                                onClick={() => handleUpgrade(n.id)}
-                              >
-                                {upgradingIds.has(n.id) ? "升级中…" : "升级"}
-                              </Btn>
-                              <Btn
-                                variant="danger"
-                                onClick={() => { if (confirm(`确定删除节点 ${n.hostname}？`)) handleDeleteNode(n.id); }}
-                              >
-                                删除
-                              </Btn>
-                            </div>
-                          </div>
-                        </div>
-                        </div>
-                      </SortableNodeRow>
-                    );
-                  })}
+                    {displayNodes.map((n) => (
+                      <div key={n.id}>{renderNodeCard(n)}</div>
+                    ))}
                   </div>
-                  </SortableContext>
-                </DndContext>
+                )
               )}
 
             </div>

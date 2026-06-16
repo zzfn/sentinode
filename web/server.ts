@@ -1,5 +1,6 @@
-// Bun 原生开发服务器：watch + serve + Tailwind CSS watch
+// Bun 原生开发服务器：watch + serve + Tailwind CSS（由 fs.watch 驱动重编）
 import { watch } from "fs";
+import { $ } from "bun";
 
 const OUTDIR = "dist";
 const API_BASE = process.env.API_BASE ?? "http://localhost:8080";
@@ -18,26 +19,26 @@ async function bundle() {
   }
 }
 
-// 初始构建
+/** 一次性编译 Tailwind CSS（不依赖存活不了的 --watch，由 fs.watch 驱动重编） */
+async function buildCss() {
+  await $`bunx @tailwindcss/cli -i ./src/globals.css -o ./dist/globals.css`.quiet();
+}
+
+// 初始构建（JS + CSS）
 await bundle();
-console.log("Initial JS build done");
+await buildCss();
+console.log("Initial build done (JS + CSS)");
 
-// 启动 Tailwind CSS watch 进程（并发运行）
-const twProc = Bun.spawn(
-  ["bunx", "@tailwindcss/cli", "-i", "./src/globals.css", "-o", "./dist/globals.css", "--watch"],
-  {
-    stdout: "inherit",
-    stderr: "inherit",
-  }
-);
-console.log(`Tailwind CSS watch started (pid: ${twProc.pid})`);
-
-// 监听 src 目录变化重新构建 JS
-watch("src", { recursive: true }, async (_, filename) => {
-  // globals.css 由 Tailwind 负责，不触发 JS 构建
-  if (filename?.endsWith(".css")) return;
-  await bundle();
-  console.log(`[${new Date().toLocaleTimeString()}] JS rebuilt`);
+// 监听 src 变化，debounce 后一起重编 JS + CSS。
+// Tailwind 需扫描 .tsx 里的类名，所以任何源文件变化都要重编 CSS。
+let rebuildTimer: ReturnType<typeof setTimeout> | null = null;
+watch("src", { recursive: true }, () => {
+  if (rebuildTimer) clearTimeout(rebuildTimer);
+  rebuildTimer = setTimeout(async () => {
+    await bundle();
+    await buildCss();
+    console.log(`[${new Date().toLocaleTimeString()}] rebuilt (JS + CSS)`);
+  }, 120);
 });
 
 const server = Bun.serve({
@@ -62,24 +63,23 @@ const server = Bun.serve({
       }
     }
 
+    // 开发模式禁用缓存，避免浏览器用旧 bundle（刷新出现旧 UI）
+    const headers = { "Cache-Control": "no-store" };
+
     // 静态资源：先查构建产物目录，再回退到项目根目录（favicon 等源文件）
     if (path !== "/" && path.includes(".")) {
       const distFile = Bun.file(`${OUTDIR}${path}`);
-      if (await distFile.exists()) return new Response(distFile);
+      if (await distFile.exists()) return new Response(distFile, { headers });
       const rootFile = Bun.file(`.${path}`);
-      if (await rootFile.exists()) return new Response(rootFile);
+      if (await rootFile.exists()) return new Response(rootFile, { headers });
     }
 
     // SPA fallback
-    return new Response(Bun.file("index.html"));
+    return new Response(Bun.file("index.html"), { headers });
   },
 });
 
 console.log(`Dev: http://localhost:${server.port}`);
 
 // 进程退出时清理 Tailwind 子进程
-process.on("exit", () => twProc.kill());
-process.on("SIGINT", () => {
-  twProc.kill();
-  process.exit(0);
-});
+process.on("SIGINT", () => process.exit(0));

@@ -27,6 +27,24 @@ export interface Node {
   net_tx_rate: number | null;
   country_code: string | null;
   location: string | null;
+  // 方案 A：最新系统指标随节点快照下发，首屏即有，无需等待 metric_added
+  cpu_percent: number | null;
+  mem_used: number | null;
+  mem_total: number | null;
+  swap_used: number | null;
+  swap_total: number | null;
+  load1: number | null;
+  load5: number | null;
+  load15: number | null;
+  uptime_secs: number | null;
+  tcp_connections: number | null;
+  metrics_updated_at: string | null;
+  // 阶段 B：硬盘（主盘）+ 网络累计流量
+  disk_used: number | null;
+  disk_total: number | null;
+  net_rx_total: number | null;
+  net_tx_total: number | null;
+  latency_history: { cu: number | null; cm: number | null; ct: number | null }[];
 }
 
 export interface AdminNode extends Node {
