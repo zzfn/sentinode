@@ -209,9 +209,13 @@ function _releaseEs(handler: SseHandler) {
 }
 
 /** 订阅 SSE 节点更新，返回 unsubscribe 函数 */
-export function subscribeNodes(onUpdate: (node: Node) => void): () => void {
+export function subscribeNodes(onUpdate: (node: Partial<Node> & { id: string }) => void): () => void {
   const handler: SseHandler = (msg) => {
     if (msg.type === "node_updated") onUpdate(msg.data as Node);
+    // 延迟历史单独推送，合并进对应节点
+    if (msg.type === "latency_history") {
+      onUpdate({ id: msg.node_id as string, latency_history: msg.data as Node["latency_history"] });
+    }
   };
   _acquireEs();
   _handlers.add(handler);

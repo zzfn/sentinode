@@ -263,13 +263,18 @@ export default function Dashboard() {
     let cancelled = false;
     const unsub = subscribeNodes((updated) => {
       if (cancelled) return;
-      setConnected(true);
       setLastUpdatedAt(Date.now());
       setNodes((prev) => {
         const idx = prev.findIndex((n) => n.id === updated.id);
-        if (idx === -1) return [...prev, updated];
+        if (idx === -1) {
+          // 仅完整节点对象才作为新节点插入；部分更新（如 latency_history）忽略
+          if (!("hostname" in updated)) return prev;
+          setConnected(true);
+          return [...prev, updated as Node];
+        }
+        setConnected(true);
         const next = [...prev];
-        next[idx] = updated;
+        next[idx] = { ...next[idx], ...updated };
         return next;
       });
     });

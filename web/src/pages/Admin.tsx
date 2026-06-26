@@ -263,6 +263,39 @@ function EditNodeDialog({
   );
 }
 
+// ── 删除节点确认弹窗 ──────────────────────────────────────────────────────────
+
+function ConfirmDeleteDialog({
+  node, onClose, onConfirm,
+}: {
+  node: AdminNode | null;
+  onClose: () => void;
+  onConfirm: () => void;
+}) {
+  if (!node) return null;
+  const displayName = node.name || node.hostname;
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+      <div className="absolute inset-0 bg-[var(--color-ink)]/40 backdrop-blur-sm" onClick={onClose} />
+      <div className={`relative z-10 w-full max-w-sm ${DIALOG_CARD} p-6 space-y-4`}>
+        <div className="flex items-center gap-2">
+          <span className="w-3 h-3 rounded-full bg-red-400 border-2 border-[var(--color-ink)]" />
+          <h2 className="text-base font-bold text-[var(--color-ink)]" style={{ fontFamily: "var(--font-display)" }}>
+            删除节点
+          </h2>
+        </div>
+        <p className="text-sm text-[var(--color-ink)]">
+          确定删除节点 <span className="font-semibold font-mono">{displayName}</span>？此操作不可撤销，所有监控数据将一并删除。
+        </p>
+        <div className="flex justify-end gap-2 pt-1">
+          <Btn variant="outline" onClick={onClose}>取消</Btn>
+          <Btn variant="danger" onClick={onConfirm}>删除</Btn>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── 重装 Agent 弹窗 ───────────────────────────────────────────────────────────
 
 function ReinstallDialog({
@@ -955,9 +988,12 @@ export default function Admin() {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editNode, setEditNode] = useState<AdminNode | null>(null);
   const [reinstallNode, setReinstallNode] = useState<AdminNode | null>(null);
+  const [deleteTargetNode, setDeleteTargetNode] = useState<AdminNode | null>(null);
   const [nodeCnyPrices, setNodeCnyPrices] = useState<Record<string, number | null>>({});
   const [upgradingIds, setUpgradingIds] = useState<Set<string>>(new Set());
   const [sortBy, setSortBy] = useState<"default" | "expiry-asc" | "expiry-desc" | "offline-first">("default");
+  // 固定的展示顺序（ID 列表），只在用户切换排序时重算，避免 SSE 实时更新引起列表闪烁
+  const [sortedIds, setSortedIds] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [backups, setBackups] = useState<{ configured: boolean; backups: BackupRecord[] } | null>(null);
   const [backupLoading, setBackupLoading] = useState(false);
@@ -1108,26 +1144,35 @@ export default function Admin() {
 
   const onlineCount = nodes.filter((n) => (Date.now() - new Date(n.last_seen).getTime()) < 120_000).length;
 
-  // 按到期时间排序后的展示列表；无到期时间的节点始终排在最后
-  const displayNodes = useMemo(() => {
-    if (sortBy === "default") return nodes;
-    if (sortBy === "offline-first") {
-      // 离线节点排在最前，便于快速发现掉线；同状态内离线时间越久越靠前
-      return [...nodes].sort((a, b) => {
-        const ta = new Date(a.last_seen).getTime();
-        const tb = new Date(b.last_seen).getTime();
-        return ta - tb;
-      });
+  // 根据排序模式计算 ID 顺序（快照一次，不随实时数据变化）
+  function computeSortedIds(mode: typeof sortBy, nodeList: AdminNode[]): string[] {
+    if (mode === "default") return nodeList.map((n) => n.id);
+    if (mode === "offline-first") {
+      return [...nodeList]
+        .sort((a, b) => new Date(a.last_seen).getTime() - new Date(b.last_seen).getTime())
+        .map((n) => n.id);
     }
-    const withExpiry = nodes.filter((n) => n.expires_at);
-    const withoutExpiry = nodes.filter((n) => !n.expires_at);
+    const withExpiry = nodeList.filter((n) => n.expires_at);
+    const withoutExpiry = nodeList.filter((n) => !n.expires_at);
     withExpiry.sort((a, b) => {
       const ta = new Date(a.expires_at!).getTime();
       const tb = new Date(b.expires_at!).getTime();
-      return sortBy === "expiry-asc" ? ta - tb : tb - ta;
+      return mode === "expiry-asc" ? ta - tb : tb - ta;
     });
-    return [...withExpiry, ...withoutExpiry];
-  }, [nodes, sortBy]);
+    return [...withExpiry, ...withoutExpiry].map((n) => n.id);
+  }
+
+  // displayNodes：非 default 模式下顺序固定（sortedIds 快照），避免 SSE 更新引起列表闪烁
+  const displayNodes = useMemo(() => {
+    if (sortBy === "default") return nodes;
+    if (sortedIds.length === 0) return nodes;
+    const nodeMap = new Map(nodes.map((n) => [n.id, n]));
+    // sortedIds 中已有的节点保持顺序，新增节点追加到末尾
+    const ordered = sortedIds.flatMap((id) => nodeMap.has(id) ? [nodeMap.get(id)!] : []);
+    const orderedSet = new Set(sortedIds);
+    const newNodes = nodes.filter((n) => !orderedSet.has(n.id));
+    return [...ordered, ...newNodes];
+  }, [nodes, sortBy, sortedIds]);
 
   // 单个节点卡片内容（拖拽与排序两种模式共用）
   function renderNodeCard(n: AdminNode) {
@@ -1221,7 +1266,7 @@ export default function Admin() {
               </Btn>
               <Btn
                 variant="danger"
-                onClick={() => { if (confirm(`确定删除节点 ${n.hostname}？`)) handleDeleteNode(n.id); }}
+                onClick={() => setDeleteTargetNode(n)}
               >
                 删除
               </Btn>
@@ -1352,7 +1397,12 @@ export default function Admin() {
                 </span>
                 <div className="ml-auto flex items-center gap-2">
                   {/* 排序：到期时间 */}
-                  <Select value={sortBy} onValueChange={(v) => setSortBy(v as typeof sortBy)}>
+                  <Select value={sortBy} onValueChange={(v) => {
+                    const next = v as typeof sortBy;
+                    setSortBy(next);
+                    // 切换排序时快照一次当前顺序，后续 SSE 更新不再改变位置
+                    setSortedIds(computeSortedIds(next, nodes));
+                  }}>
                     <SelectTrigger className="w-40 h-9 text-xs">
                       <SelectValue />
                     </SelectTrigger>
@@ -1519,6 +1569,15 @@ export default function Admin() {
         node={reinstallNode}
         serverUrl={serverUrl}
         onClose={() => setReinstallNode(null)}
+      />
+
+      <ConfirmDeleteDialog
+        node={deleteTargetNode}
+        onClose={() => setDeleteTargetNode(null)}
+        onConfirm={() => {
+          if (deleteTargetNode) handleDeleteNode(deleteTargetNode.id);
+          setDeleteTargetNode(null);
+        }}
       />
     </div>
   );

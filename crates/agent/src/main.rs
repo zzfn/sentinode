@@ -225,7 +225,11 @@ struct Cli {
 }
 
 fn build_channel(server: &str) -> Result<Channel> {
-    let mut endpoint = Channel::from_shared(server.to_owned())?;
+    let mut endpoint = Channel::from_shared(server.to_owned())?
+        .keep_alive_while_idle(true)
+        .http2_keep_alive_interval(Duration::from_secs(20))
+        .keep_alive_timeout(Duration::from_secs(10))
+        .tcp_keepalive(Some(Duration::from_secs(20)));
     if server.starts_with("https://") {
         endpoint = endpoint.tls_config(ClientTlsConfig::new().with_enabled_roots())?;
     }
@@ -241,12 +245,19 @@ async fn main() -> Result<()> {
         .timeout(Duration::from_secs(30))
         .build()?;
 
-    let channel = build_channel(&cli.server)?;
-    let bearer: MetadataValue<_> = format!("Bearer {}", cli.token).parse()?;
-    let mut client = MonitorClient::with_interceptor(channel, move |mut req: Request<()>| {
-        req.metadata_mut().insert("authorization", bearer.clone());
-        Ok(req)
-    });
+    let make_client = |server: &str, token: &str| -> Result<_> {
+        let channel = build_channel(server)?;
+        let bearer: MetadataValue<_> = format!("Bearer {}", token).parse()?;
+        Ok(MonitorClient::with_interceptor(
+            channel,
+            move |mut req: Request<()>| {
+                req.metadata_mut().insert("authorization", bearer.clone());
+                Ok(req)
+            },
+        ))
+    };
+    let mut client = make_client(&cli.server, &cli.token)?;
+    let mut consecutive_failures = 0u32;
 
     let hostname = System::host_name().unwrap_or_else(|| "unknown".into());
     let ip = local_ip()
@@ -383,6 +394,7 @@ async fn main() -> Result<()> {
                         "reported ok={} latency_test_enabled={} should_upgrade={}",
                         resp.ok, resp.latency_test_enabled, resp.should_upgrade
                     );
+                    consecutive_failures = 0;
                     latency_enabled = resp.latency_test_enabled;
                     if resp.should_upgrade {
                         let http2 = http.clone();
@@ -403,7 +415,22 @@ async fn main() -> Result<()> {
                         );
                         tokio::time::sleep(delay).await;
                     } else {
+                        consecutive_failures += 1;
                         error!("report failed after 3 attempts: {e}");
+                        // 连续失败说明 channel 已坏，重建以解决 tonic dns 抖动问题
+                        if consecutive_failures >= 3 {
+                            warn!(
+                                "rebuilding gRPC channel after {} consecutive failures",
+                                consecutive_failures
+                            );
+                            match make_client(&cli.server, &cli.token) {
+                                Ok(c) => {
+                                    client = c;
+                                    consecutive_failures = 0;
+                                }
+                                Err(e) => error!("failed to rebuild channel: {e}"),
+                            }
+                        }
                     }
                 }
             }

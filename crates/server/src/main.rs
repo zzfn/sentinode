@@ -1055,7 +1055,7 @@ async fn sse_events(
 ) -> Sse<impl tokio_stream::Stream<Item = Result<Event, Infallible>>> {
     let rx = s.event_tx.subscribe();
 
-    // 建立连接时先推送当前所有节点快照
+    // 先只查节点基础数据（快），立刻推给客户端；延迟历史单独后台查完再补发
     let rows = sqlx::query_as::<_, NodeRow>(
         "SELECT n.id, n.hostname, n.ip, n.os, n.arch, n.last_seen, n.expires_at,
                 n.price, n.price_currency, n.website_url, n.latency_test_enabled,
@@ -1074,17 +1074,35 @@ async fn sse_events(
     .fetch_all(&s.db)
     .await
     .unwrap_or_default();
+
     let ids: Vec<i64> = rows.iter().map(|r| r.id).collect();
-    let hist = fetch_latency_history(&s.db, &ids).await;
+
+    // 快照不带延迟历史，先发出去让页面立刻渲染
     let snapshot: Vec<String> = rows
         .into_iter()
         .filter_map(|row| {
-            let id = row.id;
-            let mut resp: NodeResponse = row.into();
-            resp.latency_history = hist.get(&id).cloned().unwrap_or_default();
-            serde_json::to_string(&json!({ "type": "node_updated", "data": resp })).ok()
+            serde_json::to_string(
+                &json!({ "type": "node_updated", "data": NodeResponse::from(row) }),
+            )
+            .ok()
         })
         .collect();
+
+    // 延迟历史在后台查，查完后通过 event_tx 广播给当前已连接的 SSE 客户端
+    let db2 = s.db.clone();
+    let tx2 = s.event_tx.clone();
+    tokio::spawn(async move {
+        let hist = fetch_latency_history(&db2, &ids).await;
+        for (node_id, history) in hist {
+            if let Ok(payload) = serde_json::to_string(&json!({
+                "type": "latency_history",
+                "node_id": node_id.to_string(),
+                "data": history,
+            })) {
+                let _ = tx2.send(payload);
+            }
+        }
+    });
 
     let snapshot_stream = tokio_stream::iter(
         snapshot
