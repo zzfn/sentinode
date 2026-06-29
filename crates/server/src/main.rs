@@ -110,6 +110,9 @@ struct Cli {
     r2_secret_key: Option<String>,
     #[arg(long, env = "BACKUP_INTERVAL_HOURS", default_value_t = 24u64)]
     backup_interval_hours: u64,
+    /// 仅保留最新 N 条成功备份，超出的旧备份自动从 R2 和数据库删除（0 = 不限制）
+    #[arg(long, env = "BACKUP_KEEP", default_value_t = 5i64)]
+    backup_keep: i64,
 }
 
 // ── gRPC 服务 ────────────────────────────────────────────────────────────────
@@ -494,6 +497,8 @@ struct R2Config {
     bucket: String,
     access_key: String,
     secret_key: String,
+    /// 仅保留最新 N 条成功备份（0 = 不限制）
+    keep: i64,
 }
 
 #[derive(Clone)]
@@ -920,6 +925,42 @@ async fn do_backup(
     .await?;
 
     info!("backup ok: {} ({} bytes)", key, size_bytes);
+
+    // 6. 清理超出保留数量的旧备份（keep<=0 表示不限制）
+    if r2.keep > 0 {
+        // 取出排在最新 keep 条之后的成功备份
+        let stale: Vec<(i64, Option<String>)> = sqlx::query_as(
+            "SELECT id, r2_key FROM backups
+             WHERE status = 'success'
+             ORDER BY created_at DESC
+             OFFSET $1",
+        )
+        .bind(r2.keep)
+        .fetch_all(db)
+        .await?;
+
+        for (old_id, old_key) in stale {
+            // 先删 R2 对象，删失败则保留数据库记录，留待下次重试
+            if let Some(k) = old_key {
+                if let Err(e) = client
+                    .delete_object()
+                    .bucket(&r2.bucket)
+                    .key(&k)
+                    .send()
+                    .await
+                {
+                    tracing::warn!("删除旧备份对象 {} 失败，跳过: {}", k, e);
+                    continue;
+                }
+            }
+            let _ = sqlx::query("DELETE FROM backups WHERE id = $1")
+                .bind(old_id)
+                .execute(db)
+                .await;
+            info!("已清理旧备份记录 id={}", old_id);
+        }
+    }
+
     Ok(())
 }
 
@@ -2301,6 +2342,7 @@ async fn main() -> Result<()> {
             bucket: b.clone(),
             access_key: c.clone(),
             secret_key: d.clone(),
+            keep: cli.backup_keep,
         }),
         _ => None,
     };
