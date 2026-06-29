@@ -289,11 +289,20 @@ export default function Dashboard() {
 
   const filteredNodes = useMemo(() => {
     const q = search.trim().toLowerCase();
-    return nodes.filter((n) => {
-      if (regionFilter !== "全部" && n.location !== regionFilter) return false;
-      if (!q) return true;
-      return [n.name, n.hostname, n.location, n.os].some((v) => v?.toLowerCase().includes(q));
-    });
+    return nodes
+      .filter((n) => {
+        if (regionFilter !== "全部" && n.location !== regionFilter) return false;
+        if (!q) return true;
+        return [n.name, n.hostname, n.location, n.os].some((v) => v?.toLowerCase().includes(q));
+      })
+      // 稳定排序：按管理后台设置的 sort_order 升序（未设置排后面），再按 id 兜底。
+      // 不用在线状态/CPU 等会变动的指标当排序键，避免节点上下线、负载波动时顺序跳动。
+      .sort((a, b) => {
+        const ao = a.sort_order ?? Number.MAX_SAFE_INTEGER;
+        const bo = b.sort_order ?? Number.MAX_SAFE_INTEGER;
+        if (ao !== bo) return ao - bo;
+        return a.id.localeCompare(b.id);
+      });
   }, [nodes, regionFilter, search]);
 
   const onlineCount = nodes.filter((n) => isOnline(n.last_seen)).length;
