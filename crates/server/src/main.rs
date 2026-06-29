@@ -927,41 +927,69 @@ async fn do_backup(
     info!("backup ok: {} ({} bytes)", key, size_bytes);
 
     // 6. 清理超出保留数量的旧备份（keep<=0 表示不限制）
-    if r2.keep > 0 {
-        // 取出排在最新 keep 条之后的成功备份
-        let stale: Vec<(i64, Option<String>)> = sqlx::query_as(
-            "SELECT id, r2_key FROM backups
-             WHERE status = 'success'
-             ORDER BY created_at DESC
-             OFFSET $1",
-        )
-        .bind(r2.keep)
-        .fetch_all(db)
-        .await?;
-
-        for (old_id, old_key) in stale {
-            // 先删 R2 对象，删失败则保留数据库记录，留待下次重试
-            if let Some(k) = old_key {
-                if let Err(e) = client
-                    .delete_object()
-                    .bucket(&r2.bucket)
-                    .key(&k)
-                    .send()
-                    .await
-                {
-                    tracing::warn!("删除旧备份对象 {} 失败，跳过: {}", k, e);
-                    continue;
-                }
-            }
-            let _ = sqlx::query("DELETE FROM backups WHERE id = $1")
-                .bind(old_id)
-                .execute(db)
-                .await;
-            info!("已清理旧备份记录 id={}", old_id);
-        }
+    if let Err(e) = cleanup_stale_backups(db, r2).await {
+        tracing::warn!("清理旧备份失败: {}", e);
     }
 
     Ok(())
+}
+
+/// 清理超出保留数量的旧成功备份（keep<=0 表示不限制），返回实际清理的条数。
+async fn cleanup_stale_backups(db: &PgPool, r2: &R2Config) -> anyhow::Result<u64> {
+    use aws_sdk_s3::config::{Builder as S3Builder, Credentials, Region};
+    use aws_sdk_s3::Client as S3Client;
+
+    if r2.keep <= 0 {
+        return Ok(0);
+    }
+
+    // 取出排在最新 keep 条之后的成功备份
+    let stale: Vec<(i64, Option<String>)> = sqlx::query_as(
+        "SELECT id, r2_key FROM backups
+         WHERE status = 'success'
+         ORDER BY created_at DESC
+         OFFSET $1",
+    )
+    .bind(r2.keep)
+    .fetch_all(db)
+    .await?;
+    if stale.is_empty() {
+        return Ok(0);
+    }
+
+    let endpoint = format!("https://{}.r2.cloudflarestorage.com", r2.account_id);
+    let creds = Credentials::new(&r2.access_key, &r2.secret_key, None, None, "r2");
+    let cfg = S3Builder::new()
+        .endpoint_url(&endpoint)
+        .credentials_provider(creds)
+        .region(Region::new("auto"))
+        .behavior_version(aws_sdk_s3::config::BehaviorVersion::latest())
+        .build();
+    let client = S3Client::from_conf(cfg);
+
+    let mut removed = 0u64;
+    for (old_id, old_key) in stale {
+        // 先删 R2 对象，删失败则保留数据库记录，留待下次重试
+        if let Some(k) = old_key {
+            if let Err(e) = client
+                .delete_object()
+                .bucket(&r2.bucket)
+                .key(&k)
+                .send()
+                .await
+            {
+                tracing::warn!("删除旧备份对象 {} 失败，跳过: {}", k, e);
+                continue;
+            }
+        }
+        let _ = sqlx::query("DELETE FROM backups WHERE id = $1")
+            .bind(old_id)
+            .execute(db)
+            .await;
+        info!("已清理旧备份记录 id={}", old_id);
+        removed += 1;
+    }
+    Ok(removed)
 }
 
 async fn list_backups(State(s): State<AppState>) -> Result<Json<serde_json::Value>, StatusCode> {
@@ -1033,6 +1061,21 @@ async fn test_backup(State(s): State<AppState>) -> Json<serde_json::Value> {
         .await
     {
         Ok(_) => Json(json!({ "ok": true, "message": "连通性正常" })),
+        Err(e) => Json(json!({ "ok": false, "error": e.to_string() })),
+    }
+}
+
+async fn cleanup_backups(State(s): State<AppState>) -> Json<serde_json::Value> {
+    let Some(r2) = s.r2_config.clone() else {
+        return Json(json!({ "ok": false, "error": "R2 未配置" }));
+    };
+    if r2.keep <= 0 {
+        return Json(
+            json!({ "ok": false, "error": "未设置保留数量（BACKUP_KEEP=0），不执行清理" }),
+        );
+    }
+    match cleanup_stale_backups(&s.db, &r2).await {
+        Ok(n) => Json(json!({ "ok": true, "message": format!("已清理 {} 条旧备份", n) })),
         Err(e) => Json(json!({ "ok": false, "error": e.to_string() })),
     }
 }
@@ -2372,6 +2415,7 @@ async fn main() -> Result<()> {
         .route("/backup", get(list_backups))
         .route("/backup/trigger", axum::routing::post(trigger_backup))
         .route("/backup/test", axum::routing::post(test_backup))
+        .route("/backup/cleanup", axum::routing::post(cleanup_backups))
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
             require_admin,

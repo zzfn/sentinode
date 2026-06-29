@@ -64,6 +64,10 @@ async function testBackupConn(): Promise<{ ok: boolean; message?: string; error?
   const r = await fetch(`${SERVER_URL}/api/admin/backup/test`, { method: "POST", credentials: "include" });
   return r.json();
 }
+async function cleanupBackups(): Promise<{ ok: boolean; message?: string; error?: string }> {
+  const r = await fetch(`${SERVER_URL}/api/admin/backup/cleanup`, { method: "POST", credentials: "include" });
+  return r.json();
+}
 
 // ── 公共样式常量 ──────────────────────────────────────────────────────────────
 
@@ -999,6 +1003,7 @@ export default function Admin() {
   const [backupLoading, setBackupLoading] = useState(false);
   const [backupTriggerLoading, setBackupTriggerLoading] = useState(false);
   const [backupTestLoading, setBackupTestLoading] = useState(false);
+  const [backupCleanupLoading, setBackupCleanupLoading] = useState(false);
   const [backupTestResult, setBackupTestResult] = useState<{ ok: boolean; message?: string; error?: string } | null>(null);
 
   useEffect(() => {
@@ -1488,6 +1493,20 @@ export default function Admin() {
                     className="px-3 py-2 rounded-xl text-sm font-semibold border-2 border-[var(--color-ink)] bg-white text-[var(--color-ink)] shadow-[2px_2px_0_0_#1E293B] hover:shadow-[3px_3px_0_0_#1E293B] hover:-translate-x-px hover:-translate-y-px transition-all disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     {backupTestLoading ? "测试中..." : "测试连通性"}
+                  </button>
+                  <button
+                    onClick={async () => {
+                      setBackupCleanupLoading(true);
+                      setBackupTestResult(null);
+                      const res = await cleanupBackups();
+                      setBackupTestResult(res);
+                      await fetchBackups().then(setBackups);
+                      setBackupCleanupLoading(false);
+                    }}
+                    disabled={backupCleanupLoading || backups?.configured === false}
+                    className="px-3 py-2 rounded-xl text-sm font-semibold border-2 border-[var(--color-ink)] bg-white text-[var(--color-ink)] shadow-[2px_2px_0_0_#1E293B] hover:shadow-[3px_3px_0_0_#1E293B] hover:-translate-x-px hover:-translate-y-px transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {backupCleanupLoading ? "清理中..." : "清理旧备份"}
                   </button>
                   <button
                     onClick={async () => {
