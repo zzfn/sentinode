@@ -285,8 +285,10 @@ impl Monitor for MonitorService {
              (id, node_id, cpu_percent, mem_total, mem_used, swap_total, swap_used,
               load1, load5, load15, uptime_secs, reported_at,
               latency_cu_ms, latency_cm_ms, latency_ct_ms,
-              net_rx_rate, net_tx_rate, tcp_connections)
-             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,to_timestamp($12),$13,$14,$15,$16,$17,$18)",
+              net_rx_rate, net_tx_rate, tcp_connections,
+              latency_cu_jitter, latency_cm_jitter, latency_ct_jitter,
+              latency_cu_loss, latency_cm_loss, latency_ct_loss)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,to_timestamp($12),$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24)",
         )
         .bind(self.next_id())
         .bind(node_id)
@@ -306,6 +308,12 @@ impl Monitor for MonitorService {
         .bind(m.net_rx_rate as i64)
         .bind(m.net_tx_rate as i64)
         .bind(m.tcp_connections as i32)
+        .bind(jitter_cu)
+        .bind(jitter_cm)
+        .bind(jitter_ct)
+        .bind(loss_cu)
+        .bind(loss_cm)
+        .bind(loss_ct)
         .execute(&self.db)
         .await
         .map_err(|e| Status::internal(e.to_string()))?;
@@ -680,6 +688,12 @@ struct MetricRow {
     net_rx_rate: Option<i64>,
     net_tx_rate: Option<i64>,
     tcp_connections: Option<i32>,
+    latency_cu_jitter: Option<f32>,
+    latency_cm_jitter: Option<f32>,
+    latency_ct_jitter: Option<f32>,
+    latency_cu_loss: Option<f32>,
+    latency_cm_loss: Option<f32>,
+    latency_ct_loss: Option<f32>,
 }
 
 #[derive(Serialize)]
@@ -701,6 +715,12 @@ struct MetricResponse {
     net_rx_rate: Option<i64>,
     net_tx_rate: Option<i64>,
     tcp_connections: Option<i32>,
+    latency_cu_jitter: Option<f32>,
+    latency_cm_jitter: Option<f32>,
+    latency_ct_jitter: Option<f32>,
+    latency_cu_loss: Option<f32>,
+    latency_cm_loss: Option<f32>,
+    latency_ct_loss: Option<f32>,
 }
 
 impl From<MetricRow> for MetricResponse {
@@ -723,6 +743,12 @@ impl From<MetricRow> for MetricResponse {
             net_rx_rate: r.net_rx_rate,
             net_tx_rate: r.net_tx_rate,
             tcp_connections: r.tcp_connections,
+            latency_cu_jitter: r.latency_cu_jitter,
+            latency_cm_jitter: r.latency_cm_jitter,
+            latency_ct_jitter: r.latency_ct_jitter,
+            latency_cu_loss: r.latency_cu_loss,
+            latency_cm_loss: r.latency_cm_loss,
+            latency_ct_loss: r.latency_ct_loss,
         }
     }
 }
@@ -1419,7 +1445,9 @@ async fn node_metrics(
         "SELECT id, cpu_percent, mem_total, mem_used, swap_total, swap_used,
                 load1, load5, load15, uptime_secs, reported_at,
                 latency_cu_ms, latency_cm_ms, latency_ct_ms,
-                net_rx_rate, net_tx_rate, tcp_connections
+                net_rx_rate, net_tx_rate, tcp_connections,
+                latency_cu_jitter, latency_cm_jitter, latency_ct_jitter,
+                latency_cu_loss, latency_cm_loss, latency_ct_loss
          FROM (
            SELECT *, ROW_NUMBER() OVER (ORDER BY reported_at) AS rn,
                   COUNT(*) OVER () AS cnt
@@ -2041,6 +2069,17 @@ async fn init_schema(pool: &PgPool) -> Result<()> {
     sqlx::query("ALTER TABLE metrics ADD COLUMN IF NOT EXISTS tcp_connections INT")
         .execute(pool)
         .await?;
+    // 新增：历史抖动/丢包（metrics 历史表此前只存了延迟，没存 jitter/loss）
+    for ddl in [
+        "ALTER TABLE metrics ADD COLUMN IF NOT EXISTS latency_cu_jitter REAL",
+        "ALTER TABLE metrics ADD COLUMN IF NOT EXISTS latency_cm_jitter REAL",
+        "ALTER TABLE metrics ADD COLUMN IF NOT EXISTS latency_ct_jitter REAL",
+        "ALTER TABLE metrics ADD COLUMN IF NOT EXISTS latency_cu_loss REAL",
+        "ALTER TABLE metrics ADD COLUMN IF NOT EXISTS latency_cm_loss REAL",
+        "ALTER TABLE metrics ADD COLUMN IF NOT EXISTS latency_ct_loss REAL",
+    ] {
+        sqlx::query(ddl).execute(pool).await?;
+    }
     sqlx::query("ALTER TABLE nodes ADD COLUMN IF NOT EXISTS net_rx_rate BIGINT")
         .execute(pool)
         .await?;

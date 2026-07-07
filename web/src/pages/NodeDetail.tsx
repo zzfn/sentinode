@@ -269,6 +269,12 @@ export default function NodeDetail() {
           m.latency_ct_ms != null && m.latency_ct_ms >= 0
             ? parseFloat(m.latency_ct_ms.toFixed(1))
             : null,
+        cuJitter: m.latency_cu_jitter != null ? parseFloat(m.latency_cu_jitter.toFixed(1)) : null,
+        cmJitter: m.latency_cm_jitter != null ? parseFloat(m.latency_cm_jitter.toFixed(1)) : null,
+        ctJitter: m.latency_ct_jitter != null ? parseFloat(m.latency_ct_jitter.toFixed(1)) : null,
+        cuLoss: m.latency_cu_loss != null ? parseFloat(m.latency_cu_loss.toFixed(1)) : null,
+        cmLoss: m.latency_cm_loss != null ? parseFloat(m.latency_cm_loss.toFixed(1)) : null,
+        ctLoss: m.latency_ct_loss != null ? parseFloat(m.latency_ct_loss.toFixed(1)) : null,
         rxMbps: m.net_rx_rate != null && m.net_rx_rate > 0 ? parseFloat((m.net_rx_rate / 1024 / 1024).toFixed(2)) : null,
         txMbps: m.net_tx_rate != null && m.net_tx_rate > 0 ? parseFloat((m.net_tx_rate / 1024 / 1024).toFixed(2)) : null,
         tcp: m.tcp_connections != null ? m.tcp_connections : null,
@@ -295,6 +301,16 @@ export default function NodeDetail() {
 
   const hasLatencyHistory = useMemo(
     () => chartData.some((d) => d.cu != null || d.cm != null || d.ct != null),
+    [chartData],
+  );
+
+  const hasLossHistory = useMemo(
+    () => chartData.some((d) => d.cuLoss != null || d.cmLoss != null || d.ctLoss != null),
+    [chartData],
+  );
+
+  const hasJitterHistory = useMemo(
+    () => chartData.some((d) => d.cuJitter != null || d.cmJitter != null || d.ctJitter != null),
     [chartData],
   );
 
@@ -660,6 +676,70 @@ export default function NodeDetail() {
                           <Area type="monotone" dataKey="cu" stroke="#8b5cf6" fill="url(#gradCu)" dot={false} strokeWidth={2} connectNulls={false} />
                           <Area type="monotone" dataKey="cm" stroke="#ec4899" fill="url(#gradCm)" dot={false} strokeWidth={2} connectNulls={false} />
                           <Area type="monotone" dataKey="ct" stroke="#f59e0b" fill="url(#gradCt)" dot={false} strokeWidth={2} connectNulls={false} />
+                        </AreaChart>
+                      </ChartContainer>
+                    </ChartCard>
+                  )}
+
+                  {/* 三网丢包趋势 —— 联通紫 / 移动粉 / 电信橙 */}
+                  {hasLossHistory && (
+                    <ChartCard
+                      title="三网丢包趋势"
+                      sub="联通 / 移动 / 电信"
+                      dotColor="#8b5cf6"
+                      axisLabel="丢包 %"
+                    >
+                      <ChartContainer
+                        config={{ cuLoss: { label: "联通" }, cmLoss: { label: "移动" }, ctLoss: { label: "电信" } } satisfies ChartConfig}
+                        className="w-full"
+                      >
+                        <AreaChart data={chartData} margin={{ top: 4, right: 8, bottom: 0, left: 0 }}>
+                          <defs>
+                            <AreaGradient id="gradCuLoss" color="#8b5cf6" />
+                            <AreaGradient id="gradCmLoss" color="#ec4899" />
+                            <AreaGradient id="gradCtLoss" color="#f59e0b" />
+                          </defs>
+                          <CartesianGrid vertical={false} strokeDasharray="3 3" stroke={GRID_STROKE} />
+                          <XAxis dataKey="time" tick={AXIS_TICK} axisLine={false} tickLine={false} minTickGap={24} />
+                          <YAxis tick={AXIS_TICK} axisLine={false} tickLine={false} width={48} tickFormatter={(v) => `${v}%`} domain={[0, "auto"]} />
+                          <ChartTooltip
+                            content={<ChartTooltipContent formatter={(v) => [typeof v === "number" ? `${v}%` : String(v)]} />}
+                          />
+                          <Area type="monotone" dataKey="cuLoss" stroke="#8b5cf6" fill="url(#gradCuLoss)" dot={false} strokeWidth={2} connectNulls={false} />
+                          <Area type="monotone" dataKey="cmLoss" stroke="#ec4899" fill="url(#gradCmLoss)" dot={false} strokeWidth={2} connectNulls={false} />
+                          <Area type="monotone" dataKey="ctLoss" stroke="#f59e0b" fill="url(#gradCtLoss)" dot={false} strokeWidth={2} connectNulls={false} />
+                        </AreaChart>
+                      </ChartContainer>
+                    </ChartCard>
+                  )}
+
+                  {/* 三网抖动趋势 —— 联通紫 / 移动粉 / 电信橙 */}
+                  {hasJitterHistory && (
+                    <ChartCard
+                      title="三网抖动趋势"
+                      sub="联通 / 移动 / 电信"
+                      dotColor="#8b5cf6"
+                      axisLabel="抖动 ms"
+                    >
+                      <ChartContainer
+                        config={{ cuJitter: { label: "联通" }, cmJitter: { label: "移动" }, ctJitter: { label: "电信" } } satisfies ChartConfig}
+                        className="w-full"
+                      >
+                        <AreaChart data={chartData} margin={{ top: 4, right: 8, bottom: 0, left: 0 }}>
+                          <defs>
+                            <AreaGradient id="gradCuJitter" color="#8b5cf6" />
+                            <AreaGradient id="gradCmJitter" color="#ec4899" />
+                            <AreaGradient id="gradCtJitter" color="#f59e0b" />
+                          </defs>
+                          <CartesianGrid vertical={false} strokeDasharray="3 3" stroke={GRID_STROKE} />
+                          <XAxis dataKey="time" tick={AXIS_TICK} axisLine={false} tickLine={false} minTickGap={24} />
+                          <YAxis tick={AXIS_TICK} axisLine={false} tickLine={false} width={48} tickFormatter={(v) => `${v}ms`} domain={[0, "auto"]} />
+                          <ChartTooltip
+                            content={<ChartTooltipContent formatter={(v) => [typeof v === "number" ? `${v} ms` : String(v)]} />}
+                          />
+                          <Area type="monotone" dataKey="cuJitter" stroke="#8b5cf6" fill="url(#gradCuJitter)" dot={false} strokeWidth={2} connectNulls={false} />
+                          <Area type="monotone" dataKey="cmJitter" stroke="#ec4899" fill="url(#gradCmJitter)" dot={false} strokeWidth={2} connectNulls={false} />
+                          <Area type="monotone" dataKey="ctJitter" stroke="#f59e0b" fill="url(#gradCtJitter)" dot={false} strokeWidth={2} connectNulls={false} />
                         </AreaChart>
                       </ChartContainer>
                     </ChartCard>
