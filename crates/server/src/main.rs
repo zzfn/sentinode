@@ -197,12 +197,12 @@ impl Monitor for MonitorService {
             sqlx::query(
                 "WITH upd AS (
                    UPDATE nodes
-                   SET ip=$3, os=$4, arch=$5, last_seen=NOW(),
+                   SET hostname=$2, ip=$3, os=$4, arch=$5, last_seen=NOW(),
                        token=COALESCE(nodes.token, $6),
                        cpu_model=COALESCE(NULLIF($7,''), cpu_model),
                        agent_version=NULLIF($8,'')
-                   WHERE hostname=$2
-                     AND (token=$6 OR (token IS NULL AND $6 IS NULL))
+                   WHERE ($6 IS NOT NULL AND token=$6)
+                      OR ($6 IS NULL AND hostname=$2 AND token IS NULL)
                    RETURNING id
                  ),
                  ins AS (
